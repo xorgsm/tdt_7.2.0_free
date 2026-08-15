@@ -505,8 +505,10 @@ class DownloadPanel(QWidget):
         el proceso yt-dlp.exe seguiría vivo en segundo plano después de cerrar
         la ventana, descargando y ocupando disco sin que nadie lo vea.
 
-        on_wait: ver TorrentClient.cerrar() -- se reenvía tal cual hasta
-        allí para que la espera de aria2 no bloquee la interfaz.
+        on_wait: se reenvía tal cual hasta TorrentClient.cerrar() por
+        compatibilidad con su firma anterior (cuando aria2c.exe corría
+        aparte y había que esperar su apagado) -- con libtorrent en el
+        propio proceso, cerrar() ya no bloquea, así que no hace falta.
         """
         for worker in (self._worker, self._update_worker, self._search_worker):
             if worker is not None and worker.isRunning():

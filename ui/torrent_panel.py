@@ -1,11 +1,11 @@
 """
-Pestaña "Torrents" del panel de Descargas — vía aria2c empaquetado con la
-app. Estilo inspirado en Transmission: barra de herramientas con iconos
-(añadir archivo/enlace, reanudar, pausar, quitar, información), un filtro
-"Mostrar:" con dos desplegables (estado y orden) y una lista única donde
-cada torrent enseña progreso, tamaño, tiempo restante, pares conectados y
-velocidad — aunque por debajo sigue siendo aria2 hablando JSON-RPC, no
-Transmission ni qBittorrent.
+Pestaña "Torrents" del panel de Descargas — vía libtorrent embebido en el
+propio proceso de la app. Estilo inspirado en Transmission: barra de
+herramientas con iconos (añadir archivo/enlace, reanudar, pausar, quitar,
+información), un filtro "Mostrar:" con dos desplegables (estado y orden) y
+una lista única donde cada torrent enseña progreso, tamaño, tiempo
+restante, pares conectados y velocidad — aunque por debajo sigue siendo
+libtorrent, no Transmission ni qBittorrent.
 
 Coder By X@R
 """
@@ -86,7 +86,7 @@ def _formatear_eta(segundos: int) -> str:
 
 
 def _bucket_estado(state: str) -> str:
-    """A qué grupo del filtro "Mostrar:" pertenece un estado de aria2."""
+    """A qué grupo del filtro "Mostrar:" pertenece un estado de torrent."""
     if state in ESTADOS_COMPLETADOS:
         return "Completados"
     if state == "pausedDL":
@@ -148,9 +148,9 @@ class TorrentPanel(QWidget):
             self._conectar()
         else:
             self._set_status(
-                "No se encontró el motor de torrents (aria2c.exe) empaquetado "
-                "con esta aplicación. Si compilaste tú el .exe, revisa que "
-                "resources/aria2/aria2c.exe exista antes de compilar.",
+                "No se encontró el motor de torrents (libtorrent) empaquetado "
+                "con esta aplicación. Si compilaste tú el .exe, revisa que la "
+                "dependencia 'libtorrent' esté instalada antes de compilar.",
                 error=True,
             )
 
@@ -660,9 +660,10 @@ class TorrentPanel(QWidget):
     def _cargar_historial_persistente(self):
         """
         Puebla la lista de completados con lo guardado en sesiones
-        anteriores. aria2 no recuerda nada entre arranques del proceso, así
-        que sin esto la lista de "Completados" se vaciaba cada vez que se
-        cerraba la app — ahora sobrevive, igual que el historial de canales.
+        anteriores. libtorrent (igual que aria2 antes) no recuerda nada entre
+        arranques del proceso, así que sin esto la lista de "Completados" se
+        vaciaba cada vez que se cerraba la app — ahora sobrevive, igual que
+        el historial de canales.
         """
         self._completados = [
             {"name": e["name"], "path": e["path"], "size": e.get("size", 0)}

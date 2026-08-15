@@ -6,6 +6,28 @@ trazabilidad fiable de versiones anteriores más allá de lo que ya vive en
 el propio código (comentarios de cabecera, `final-residual-fix-report.md`),
 así que no se reconstruye aquí para no inventar fechas ni alcance.
 
+## [7.3.0] — 2026-08-15
+
+### Changed
+- Motor de torrents: aria2c (proceso externo + JSON-RPC sobre HTTP local)
+  sustituido por **libtorrent** (bindings Python, en el propio proceso de
+  la app). Ya no hay ningún binario que descargar, empaquetar ni apagar al
+  cerrar la app — se instala como cualquier otra dependencia de pip. La
+  API pública de `TorrentClient`/`TorrentInfo`/`paquete_disponible()` no
+  cambió, así que `ui/torrent_panel.py` no necesitó tocarse salvo textos.
+  Verificado con un torrent público real (metadatos, progreso, pares,
+  pausar/reanudar/eliminar) además de la suite de tests con mocks.
+
+### Added
+- `eliminar(hash_, borrar_archivos=True)` ahora sí borra los archivos ya
+  descargados — con aria2c esto quedaba documentado como limitación sin
+  implementar; libtorrent lo soporta de forma nativa.
+
+### Fixed
+- Eliminada una clase entera de bug: al no haber ya un proceso externo
+  (aria2c.exe) para el motor de torrents, no puede quedar huérfano al
+  cerrar la app aunque Windows fuerce el cierre a mitad de un apagado.
+
 ## [7.2.0] — 2026-08-15
 
 ### Added

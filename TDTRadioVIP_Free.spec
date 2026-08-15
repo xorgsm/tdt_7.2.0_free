@@ -8,7 +8,10 @@ import os, sys
 
 from PyInstaller.utils.hooks import collect_submodules
 
-hidden_imports = collect_submodules('pychromecast') + collect_submodules('zeroconf')
+hidden_imports = (
+    collect_submodules('pychromecast') + collect_submodules('zeroconf')
+    + collect_submodules('libtorrent')
+)
 
 
 def buscar_vlc():
@@ -34,13 +37,6 @@ if not os.path.isfile(os.path.join(FFMPEG_DIR, "ffmpeg.exe")):
         "Descargalo de https://www.gyan.dev/ffmpeg/builds/\n"
     )
 
-ARIA2_DIR = os.path.join("resources", "aria2")
-if not os.path.isfile(os.path.join(ARIA2_DIR, "aria2c.exe")):
-    raise SystemExit(
-        "\n[TDTRadioVIP] Falta aria2c.exe en resources\\aria2\\aria2c.exe (motor de torrents)\n"
-        "Descargalo de https://github.com/aria2/aria2/releases\n"
-    )
-
 binaries = [
     (os.path.join(VLC_DIR, "libvlc.dll"), "."),
     (os.path.join(VLC_DIR, "libvlccore.dll"), "."),
@@ -49,7 +45,6 @@ binaries = [
 datas = [
     (os.path.join(VLC_DIR, "plugins"), "plugins"),
     (os.path.join(FFMPEG_DIR, "ffmpeg.exe"), FFMPEG_DIR),
-    (os.path.join(ARIA2_DIR, "aria2c.exe"), ARIA2_DIR),
 ]
 
 # ffprobe.exe (~97 MB) no se usa en el código — solo ffmpeg, en

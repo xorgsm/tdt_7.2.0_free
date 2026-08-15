@@ -2,3 +2,4 @@ PySide6>=6.5
 python-vlc>=3.0.18122
 requests>=2.31
 pychromecast>=14.0
+libtorrent>=2.1

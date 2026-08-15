@@ -1,10 +1,10 @@
 """
 Historial persistente de torrents completados.
 
-aria2 no guarda un historial propio en disco más allá de lo que dura el
-proceso corriendo — al cerrar la app, se perdería la lista de "Completados"
-si no se guardara aparte. Mismo patrón que core/history.py (canales/radio),
-pero para descargas de torrents.
+libtorrent (igual que aria2 antes) no guarda un historial propio en disco
+más allá de lo que dura el proceso corriendo — al cerrar la app, se
+perdería la lista de "Completados" si no se guardara aparte. Mismo patrón
+que core/history.py (canales/radio), pero para descargas de torrents.
 
 Coder By X@R
 """
@@ -51,8 +51,9 @@ def _save(history: List[dict]) -> None:
 def add_entry(name: str, path: str, size: int = 0) -> List[dict]:
     """
     Registra un torrent completado al principio del historial. Si ese
-    mismo nombre+ruta ya estaba (p. ej. al reabrir la app y aria2 lo
-    reporta de nuevo como completo), se mueve arriba en vez de duplicarse.
+    mismo nombre+ruta ya estaba (p. ej. al reabrir la app y el motor de
+    torrents lo reporta de nuevo como completo), se mueve arriba en vez de
+    duplicarse.
     """
     history = load_history()
     if not name or not path:

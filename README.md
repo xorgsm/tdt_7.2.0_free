@@ -28,7 +28,7 @@ tiempo. Usa "Archivo > Actualizar canales/emisoras" para refrescar las listas.
 - Favoritos, historial y colas de reproducción.
 - Canales y emisoras propios, o importados desde una lista M3U (menú Archivo).
 - Grabación de stream a archivo (requiere ffmpeg).
-- Descargas (incluye búsqueda multi-fuente y torrents vía aria2c).
+- Descargas (incluye búsqueda multi-fuente y torrents vía libtorrent).
 - Guía de programación (EPG) con avisos de inicio de programa.
 - Ecualizador de audio (graves/medios/agudos, presets de fábrica de libVLC).
 - Envío a TV: Chromecast/Google Cast y, como alternativa, TV con DLNA/UPnP
@@ -69,7 +69,7 @@ core/                    Lógica de negocio (sin Qt, salvo QThread/Signal)
   epg.py                   Guía de programación XMLTV (opcional)
   recorder.py              Grabación de stream con ffmpeg
   downloader.py            Descargas y búsqueda multi-fuente
-  torrent_client.py        Cliente de torrents vía aria2c (RPC local)
+  torrent_client.py        Cliente de torrents vía libtorrent (en proceso)
   caster.py / dlna_caster.py   Envío a TV: Chromecast y DLNA/UPnP
 player/
   vlc_player.py            Widget de vídeo/audio embebido con libVLC
@@ -84,19 +84,20 @@ tests/                    pytest sobre core/ (ver tests/conftest.py)
 
 ## Compilar a EXE portable con PyInstaller
 
-Requiere VLC 64 bits instalado, y `ffmpeg.exe` / `aria2c.exe` copiados a mano
-en `resources/ffmpeg/` y `resources/aria2/` respectivamente (el `.spec`
-aborta con un mensaje explícito si falta alguno):
+Requiere VLC 64 bits instalado, y `ffmpeg.exe` copiado a mano en
+`resources/ffmpeg/` (el `.spec` aborta con un mensaje explícito si falta):
 
 - ffmpeg: https://www.gyan.dev/ffmpeg/builds/
-- aria2: https://github.com/aria2/aria2/releases
+
+libtorrent no necesita ningún paso manual: se instala como cualquier otra
+dependencia de `requirements.txt` y el `.spec` lo empaqueta solo.
 
 ```powershell
 pyinstaller TDTRadioVIP_Free.spec
 ```
 
 El `.spec` ya se encarga de empaquetar `libvlc.dll`, sus plugins, ffmpeg,
-aria2c y el icono — el EXE resultante funciona en PCs sin VLC instalado.
+libtorrent y el icono — el EXE resultante funciona en PCs sin VLC instalado.
 
 ## Tests
 

@@ -1,44 +1,42 @@
 """
-Cliente de torrents — vía aria2c, empaquetado directamente con la app.
+Cliente de torrents — vía libtorrent (bindings Python), en el mismo proceso
+de la app.
 
-A diferencia del enfoque anterior (que dependía de qBittorrent instalado
-aparte por el usuario, con su Web UI activada a mano — nada práctico),
-esto funciona igual que ffmpeg: un ejecutable que viaja DENTRO de la app,
-se arranca solo en segundo plano la primera vez que hace falta, y el
-usuario no instala ni configura nada.
-
-aria2c habla JSON-RPC por HTTP local — se usa 'requests' (ya es
-dependencia del proyecto) para hablar con él, sin librerías extra que
-puedan tener problemas de compatibilidad con la versión de Python.
+A diferencia del enfoque anterior con aria2c (un .exe empaquetado que se
+arrancaba como proceso aparte y se controlaba por JSON-RPC sobre HTTP
+local), libtorrent es una librería C++ con bindings Python que corre
+DENTRO del proceso de la app: no hay ningún ejecutable que empaquetar,
+arrancar, vigilar ni apagar limpiamente al cerrar — se instala como
+cualquier otra dependencia de pip y desaparece con el objeto Python. Sigue
+cumpliendo el mismo principio que ffmpeg/aria2c antes: el usuario no
+instala ni configura nada.
 
 Coder By X@R
 """
-import base64
-import os
 import secrets
-import subprocess
-import time
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-import requests
-
-from core.config import get_aria2_exe, get_app_data_dir
 from core.logger import get_logger
 
 log = get_logger(__name__)
 
-RPC_PORT = 6801  # puerto poco común, para minimizar choque con otra cosa
-_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+try:
+    import libtorrent as lt
+except Exception as _exc:  # pragma: no cover - solo si falta el paquete
+    lt = None
+    LIBTORRENT_IMPORT_ERROR = str(_exc)
+else:
+    LIBTORRENT_IMPORT_ERROR = ""
 
 # Trackers públicos conocidos y estables, AÑADIDOS a los que ya traiga cada
-# torrent/magnet (aria2 combina las dos listas, no sustituye una por otra).
-# Motivo: muchos magnet links de fuentes públicas apenas traen tracker
-# propio y dependen casi del todo de DHT/PEX para encontrar pares -- con
-# pocos pares detectados, la velocidad se resiente aunque el resto de la
-# configuración sea buena. No sustituye a DHT/PEX/LPD (que ya estaban
-# activados), es una vía más de descubrimiento de pares.
-_TRACKERS_PUBLICOS = ",".join([
+# torrent/magnet (se suman a la lista propia del .torrent o del magnet, no
+# la sustituyen). Motivo: muchos magnet links de fuentes públicas apenas
+# traen tracker propio y dependen casi del todo de DHT/PEX para encontrar
+# pares -- con pocos pares detectados, la velocidad se resiente aunque el
+# resto de la configuración sea buena. No sustituye a DHT/PEX/LSD (ver
+# ajustes en conectar()), es una vía más de descubrimiento de pares.
+_TRACKERS_PUBLICOS = [
     "udp://tracker.opentrackr.org:1337/announce",
     "udp://open.tracker.cl:1337/announce",
     "udp://tracker.openbittorrent.com:6969/announce",
@@ -46,19 +44,9 @@ _TRACKERS_PUBLICOS = ",".join([
     "udp://tracker.torrent.eu.org:451/announce",
     "udp://open.stealth.si:80/announce",
     "udp://tracker.tiny-vps.com:6969/announce",
-])
+]
 
-# Traduce los estados de aria2 a los mismos nombres que ya esperaba la
-# interfaz (ui/torrent_panel.py), para no tener que tocar esa parte al
-# cambiar de motor por debajo.
-_ESTADO_ARIA2_A_INTERNO = {
-    "active": "downloading",
-    "waiting": "queuedDL",
-    "paused": "pausedDL",
-    "error": "error",
-    "complete": "stalledUP",
-    "removed": "error",
-}
+_NOMBRE_PENDIENTE = "(obteniendo nombre…)"
 
 
 @dataclass
@@ -71,213 +59,212 @@ class TorrentInfo:
     size: int
     eta: int  # segundos; -1 si no se puede estimar
     upspeed: int = 0  # bytes/s
-    # Peers/servidores a los que aria2 está conectado ahora mismo para este
-    # torrent -- a diferencia de Transmission, aria2 no expone aparte cuántos
-    # peers hay disponibles en total (solo con los que ya conectó), así que
-    # la interfaz solo puede mostrar "conectado a N pares", no "N de M".
+    # Peers a los que libtorrent está conectado ahora mismo para este
+    # torrent (status.num_peers) -- igual que con aria2 antes, no hay un
+    # "N de M" total, solo cuántos hay conectados en este momento.
     peers: int = 0
 
 
 def paquete_disponible() -> bool:
-    """Antes comprobaba si el paquete Python 'qbittorrent-api' estaba
-    instalado; ahora comprueba si aria2c.exe viene empaquetado con la
-    app — ya no depende de nada que el usuario tenga que instalar."""
-    return get_aria2_exe() is not None
+    """Antes comprobaba si aria2c.exe venía empaquetado con la app; ahora
+    comprueba si el paquete Python 'libtorrent' se pudo importar -- sigue
+    sin depender de nada que el usuario tenga que instalar aparte, solo
+    que ahora es una dependencia de pip normal en vez de un binario."""
+    return lt is not None
+
+
+def _estado_legible(status) -> str:
+    """Traduce el estado nativo de libtorrent al mismo vocabulario que ya
+    esperaba la interfaz (ui/torrent_panel.py, heredado de qBittorrent vía
+    la capa de aria2 anterior), para no tener que tocar esa parte al
+    cambiar de motor por debajo."""
+    error_msg = ""
+    try:
+        if status.errc and status.errc.value():
+            error_msg = status.errc.message()
+    except Exception:
+        error_msg = getattr(status, "error", "") or ""
+    if error_msg:
+        return "error"
+
+    st = status.state
+    pausado = bool(status.paused)
+    terminado = st in (lt.torrent_status.finished, lt.torrent_status.seeding)
+
+    if st in (lt.torrent_status.checking_files, lt.torrent_status.checking_resume_data,
+              lt.torrent_status.queued_for_checking):
+        return "checkingDL"
+    if st == lt.torrent_status.downloading_metadata:
+        return "metaDL"
+    if st == lt.torrent_status.allocating:
+        return "queuedDL"
+
+    if terminado:
+        if pausado:
+            return "pausedUP"
+        if status.upload_rate == 0 and status.num_peers == 0:
+            return "stalledUP"
+        return "uploading"
+
+    # st == downloading, o cualquier otro caso no cubierto arriba
+    if pausado:
+        return "pausedDL"
+    if status.download_rate == 0 and status.num_peers == 0:
+        return "stalledDL"
+    return "downloading"
 
 
 class TorrentClient:
     def __init__(self, *_args, **_kwargs):
-        # Los parámetros host/port/username/password del enfoque anterior
-        # (para conectar con qBittorrent) ya no aplican; se aceptan y se
+        # Los parámetros host/port/username/password de enfoques todavía
+        # más antiguos (qBittorrent Web UI) ya no aplican; se aceptan y se
         # ignoran para no romper a quien construya TorrentClient() con esa
-        # firma antigua.
-        self._proceso: Optional[subprocess.Popen] = None
-        self._secret = secrets.token_hex(16)
-        self._rpc_url = f"http://127.0.0.1:{RPC_PORT}/jsonrpc"
+        # firma vieja.
+        self._session = None
+        self._handles: Dict[str, "lt.torrent_handle"] = {}
+        self._nombres_pendientes: Dict[str, str] = {}
 
     @property
     def conectado(self) -> bool:
-        return self._proceso is not None and self._proceso.poll() is None
+        return self._session is not None
 
     def conectar(self) -> Optional[str]:
         if self.conectado:
             return None
-        exe = get_aria2_exe()
-        if exe is None:
-            return "No se encontró aria2c.exe empaquetado con la aplicación."
-
-        carpeta_incompletos = get_app_data_dir() / "torrents_incompletos"
-        carpeta_incompletos.mkdir(parents=True, exist_ok=True)
+        if lt is None:
+            return f"No se pudo cargar el motor de torrents (libtorrent): {LIBTORRENT_IMPORT_ERROR}"
 
         try:
-            self._proceso = subprocess.Popen(
-                [
-                    exe,
-                    "--enable-rpc",
-                    f"--rpc-listen-port={RPC_PORT}",
-                    f"--rpc-secret={self._secret}",
-                    "--rpc-listen-all=false",
-                    "--dir", str(carpeta_incompletos),
-                    "--continue=true",
-                    "--file-allocation=none",
-                    "--bt-enable-lpd=true",
-                    "--enable-dht=true",
-                    "--enable-dht6=true",
-                    "--enable-peer-exchange=true",
-                    f"--bt-tracker={_TRACKERS_PUBLICOS}",
-                    # Techo de pares por torrent más alto que el valor por
-                    # defecto de aria2 (55): con más vías de descubrimiento
-                    # (arriba) puede encontrar más pares de los que antes
-                    # llegaba a usar, así que subir el techo también importa,
-                    # no solo encontrarlos.
-                    "--bt-max-peers=130",
-                    # Sigue pidiendo más pares al tracker mientras la
-                    # velocidad no supere este umbral -- el valor por
-                    # defecto (50K) se da por "suficiente" demasiado pronto.
-                    "--bt-request-peer-speed-limit=100K",
-                    # Caché de escritura más generosa que el valor por
-                    # defecto (16M): menos parones de disco al recibir
-                    # varias piezas seguidas, sobre todo en discos mecánicos
-                    # o unidades de red.
-                    "--disk-cache=64M",
-                    # Prioriza (sin exigir -- no descarta pares que no lo
-                    # soporten) cifrar la conexión BitTorrent: algunos ISP
-                    # limitan el tráfico BT detectado como no cifrado.
-                    "--bt-min-crypto-level=arc4",
-                    "--quiet=true",
-                ],
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                creationflags=_CREATE_NO_WINDOW,
-            )
-        except OSError as exc:
-            log.exception("No se pudo arrancar aria2c.exe")
+            self._session = lt.session({
+                "listen_interfaces": "0.0.0.0:6889,[::]:6889",
+                "enable_dht": True,
+                "enable_lsd": True,
+                "enable_natpmp": True,
+                "enable_upnp": True,
+                # Sin límite propio -- igual que con aria2 antes, no se
+                # imponía ningún tope de velocidad por defecto.
+                "download_rate_limit": 0,
+                "upload_rate_limit": 0,
+                # Techo de conexiones total de la sesión más alto que el
+                # valor por defecto de libtorrent (200 ya es el default,
+                # se deja explícito para que quede documentado el motivo:
+                # con varios torrents activos a la vez, 200 se queda corto).
+                "connections_limit": 400,
+                "active_downloads": -1,
+                "active_seeds": -1,
+                "active_limit": -1,
+            })
+        except Exception as exc:
+            log.exception("No se pudo crear la sesión de libtorrent")
+            self._session = None
             return f"No se pudo arrancar el motor de torrents: {exc}"
-
-        # Esperar a que el RPC esté escuchando antes de dar por conectado.
-        for _ in range(20):
-            if self._rpc_call("aria2.getVersion") is not None:
-                return None
-            time.sleep(0.25)
-        return "El motor de torrents no respondió a tiempo al arrancar."
-
-    def _rpc_call(self, method: str, params: Optional[list] = None, timeout: float = 5):
-        payload = {
-            "jsonrpc": "2.0", "id": "tdtradiovip", "method": method,
-            "params": [f"token:{self._secret}"] + (params or []),
-        }
-        try:
-            resp = requests.post(self._rpc_url, json=payload, timeout=timeout)
-            resp.raise_for_status()
-            data = resp.json()
-        except (requests.RequestException, ValueError):
-            return None
-        if "error" in data:
-            log.warning("aria2 RPC error en %s: %s", method, data["error"])
-            return None
-        return data.get("result")
+        return None
 
     def anadir(self, magnet_o_ruta: str, carpeta_destino: str) -> Optional[str]:
         if not self.conectado:
             return "El motor de torrents no está en marcha."
-        opciones = {"dir": carpeta_destino}
-        if magnet_o_ruta.lower().startswith("magnet:"):
-            resultado = self._rpc_call("aria2.addUri", [[magnet_o_ruta], opciones])
-        else:
-            try:
-                with open(magnet_o_ruta, "rb") as f:
-                    contenido_b64 = base64.b64encode(f.read()).decode("ascii")
-            except OSError as exc:
-                return f"No se pudo leer el archivo .torrent: {exc}"
-            resultado = self._rpc_call("aria2.addTorrent", [contenido_b64, [], opciones])
-        if resultado is None:
-            return "El motor de torrents rechazó el enlace o archivo (¿formato inválido?)."
+
+        try:
+            if magnet_o_ruta.lower().startswith("magnet:"):
+                params = lt.parse_magnet_uri(magnet_o_ruta)
+            else:
+                info = lt.torrent_info(magnet_o_ruta)
+                params = lt.add_torrent_params()
+                params.ti = info
+        except Exception as exc:
+            return f"El enlace o archivo .torrent no es válido: {exc}"
+
+        params.save_path = carpeta_destino
+        try:
+            params.trackers = list(params.trackers) + _TRACKERS_PUBLICOS
+        except Exception:
+            # Si el binding de esta versión no expone .trackers como lista
+            # mutable, se sigue sin los trackers extra en vez de romper el
+            # añadido -- DHT/PEX/LSD (activados en conectar()) siguen
+            # funcionando igual.
+            log.warning("No se pudieron añadir los trackers públicos extra")
+
+        try:
+            handle = self._session.add_torrent(params)
+        except Exception as exc:
+            log.exception("libtorrent rechazó el torrent")
+            return f"El motor de torrents rechazó el enlace o archivo: {exc}"
+
+        token = secrets.token_hex(8)
+        self._handles[token] = handle
+        self._nombres_pendientes[token] = getattr(params, "name", "") or _NOMBRE_PENDIENTE
         return None
 
     def listar(self) -> List[TorrentInfo]:
         if not self.conectado:
             return []
-        activos = self._rpc_call("aria2.tellActive") or []
-        esperando = self._rpc_call("aria2.tellWaiting", [0, 200]) or []
-        parados = self._rpc_call("aria2.tellStopped", [0, 200]) or []
-        return [self._parse_torrent(t) for t in (activos + esperando + parados)]
 
-    @staticmethod
-    def _parse_torrent(t: dict) -> TorrentInfo:
-        total = int(t.get("totalLength", 0) or 0)
-        completado = int(t.get("completedLength", 0) or 0)
-        progreso = (completado / total) if total > 0 else 0.0
+        resultado = []
+        for token, handle in list(self._handles.items()):
+            if not handle.is_valid():
+                continue
+            status = handle.status()
 
-        nombre = "(obteniendo nombre…)"
-        info = (t.get("bittorrent") or {}).get("info") or {}
-        if info.get("name"):
-            nombre = info["name"]
-        elif t.get("files"):
-            primero = t["files"][0].get("path", "")
-            nombre = os.path.basename(primero) or nombre
+            nombre = status.name or self._nombres_pendientes.get(token) or _NOMBRE_PENDIENTE
+            if status.name:
+                # En cuanto llegan metadatos el nombre real ya no cambia;
+                # se deja de necesitar el provisional.
+                self._nombres_pendientes.pop(token, None)
 
-        dlspeed = int(t.get("downloadSpeed", 0) or 0)
-        eta = int((total - completado) / dlspeed) if dlspeed > 0 else -1
+            total = int(status.total_wanted or 0)
+            completado = int(status.total_wanted_done or 0)
+            progreso = (completado / total) if total > 0 else float(status.progress or 0.0)
 
-        return TorrentInfo(
-            hash=t.get("gid", ""), name=nombre, progress=progreso,
-            state=_ESTADO_ARIA2_A_INTERNO.get(t.get("status", ""), t.get("status", "")),
-            dlspeed=dlspeed, size=total, eta=eta,
-            upspeed=int(t.get("uploadSpeed", 0) or 0),
-            peers=int(t.get("connections", 0) or 0),
-        )
+            dlspeed = int(status.download_rate or 0)
+            eta = int((total - completado) / dlspeed) if dlspeed > 0 else -1
+
+            resultado.append(TorrentInfo(
+                hash=token, name=nombre, progress=progreso,
+                state=_estado_legible(status),
+                dlspeed=dlspeed, size=total, eta=eta,
+                upspeed=int(status.upload_rate or 0),
+                peers=int(status.num_peers or 0),
+            ))
+        return resultado
 
     def pausar(self, hash_: str):
-        self._rpc_call("aria2.pause", [hash_])
+        handle = self._handles.get(hash_)
+        if handle is not None and handle.is_valid():
+            handle.pause()
 
     def reanudar(self, hash_: str):
-        self._rpc_call("aria2.unpause", [hash_])
+        handle = self._handles.get(hash_)
+        if handle is not None and handle.is_valid():
+            handle.resume()
 
     def eliminar(self, hash_: str, borrar_archivos: bool = False):
         """
-        Nota honesta: aria2 no borra los archivos ya descargados al quitar
-        un torrent de la lista (borrar_archivos queda sin implementar por
-        ahora) — solo deja de descargar/compartirlo. Si hace falta borrar
-        también el contenido, se puede añadir mirando 'files' de
-        aria2.tellStatus antes de eliminar, pero con torrents de varios
-        archivos hay que hacerlo con cuidado para no dejar algo a medias.
+        A diferencia de aria2 (que nunca llegó a borrar los archivos ya
+        descargados al quitar un torrent — quedó documentado como
+        limitación sin implementar), libtorrent sí lo soporta de forma
+        nativa vía el flag session.delete_files.
         """
-        self._rpc_call("aria2.remove", [hash_])
-        self._rpc_call("aria2.removeDownloadResult", [hash_])
+        handle = self._handles.pop(hash_, None)
+        self._nombres_pendientes.pop(hash_, None)
+        if handle is None or not handle.is_valid():
+            return
+        flags = lt.session.delete_files if borrar_archivos else 0
+        self._session.remove_torrent(handle, flags)
 
     def cerrar(self, on_wait=None):
         """
-        Apaga aria2c limpiamente. Imprescindible llamarlo al cerrar la app,
-        o el proceso se queda huérfano corriendo en segundo plano.
+        Libera la sesión de libtorrent. A diferencia de aria2c.exe antes
+        (proceso externo que había que esperar/matar con cuidado para no
+        dejarlo huérfano, ver core.recorder.Recorder.stop() para el mismo
+        patrón en otro sitio de la app), aquí no hay ningún proceso
+        externo que gestionar: libtorrent corre en el propio proceso de la
+        app y libera sockets/hilos internos en el destructor de la sesión.
 
-        on_wait: callback opcional invocado repetidamente mientras se
-        espera a que el proceso termine (normalmente
-        QApplication.processEvents, pasado desde la UI) -- sin esto, la
-        espera bloquea el hilo de la interfaz entero. Con torrents activos
-        pesando la RPC de aria2, ese bloqueo podía superar los segundos que
-        tarda Windows en marcar la ventana como "no responde"; si el
-        usuario forzaba el cierre en ese momento, aria2c.exe se quedaba sin
-        llegar a apagarse -- exactamente el "se queda activo al cerrar"
-        reportado. Ver core.recorder.Recorder.stop(), mismo patrón.
+        on_wait: se acepta por compatibilidad con la firma anterior (la
+        UI lo pasaba para poder seguir bombeando QApplication.processEvents
+        mientras aria2c se apagaba); ya no hace falta invocarlo porque
+        cerrar() no bloquea.
         """
-        if self._proceso is None:
-            return
-        # Timeout corto a propósito: aria2 corre en el propio PC (loopback
-        # HTTP), así que si está vivo responde en milisegundos. Los 5s por
-        # defecto de _rpc_call tienen sentido para operaciones normales,
-        # pero aquí solo alargarían la espera del cierre sin necesidad si
-        # aria2 ya no responde.
-        self._rpc_call("aria2.shutdown", timeout=1.5)
-
-        deadline = time.monotonic() + 3
-        while self._proceso.poll() is None and time.monotonic() < deadline:
-            if on_wait:
-                on_wait()
-            time.sleep(0.05)
-
-        if self._proceso.poll() is None:
-            self._proceso.kill()
-            try:
-                self._proceso.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                log.warning("aria2c.exe no terminó ni siquiera tras kill()")
-        self._proceso = None
+        self._handles.clear()
+        self._nombres_pendientes.clear()
+        self._session = None

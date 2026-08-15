@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 APP_NAME = "TDTRadioVIP"
 APP_ORG = "CoderByXR"
-APP_VERSION = "7.2.0"
+APP_VERSION = "7.3.0"
 # Correo al que el cliente envía su ID de equipo para pedir el código de
 # activación. Centralizado aquí para no tener que buscarlo por el código
 # si algún día cambia.
@@ -217,24 +217,6 @@ def get_icon_path() -> Optional[str]:
     )
     candidato = os.path.join(base_dir, "resources", "icon.ico")
     return candidato if os.path.isfile(candidato) else None
-
-
-def get_aria2_exe() -> Optional[str]:
-    """
-    Ruta al aria2c.exe empaquetado con la app (motor de torrents), o None
-    si no está incluido. Mismo patrón que get_ffmpeg_exe(): en el .exe
-    compilado se extrae a sys._MEIPASS; en desarrollo se busca en
-    resources/aria2 del propio proyecto. A diferencia de ffmpeg, no se
-    busca alternativa en el PATH del sistema — este es el único uso de
-    aria2 en toda la app, así que si no viene empaquetado, no hay torrents.
-    """
-    base_dir = getattr(
-        sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    )
-    candidato = os.path.join(base_dir, "resources", "aria2", "aria2c.exe")
-    if os.path.isfile(candidato):
-        return candidato
-    return None
 
 
 def load_settings() -> dict:

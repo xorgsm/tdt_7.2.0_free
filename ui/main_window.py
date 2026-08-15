@@ -1966,10 +1966,10 @@ class MainWindow(QMainWindow):
         self.equalizer.stop()
         self._cast_session.disconnect()
         self._dlna_session.disconnect()
-        # on_wait: ver el comentario del recorder.stop() más arriba -- mismo
-        # motivo, esta vez para que apagar aria2c.exe (si había torrents
-        # activos) no bloquee la interfaz y deje el proceso huérfano si
-        # Windows fuerza el cierre antes de que termine.
+        # on_wait: se reenvía por compatibilidad con la firma anterior (ver
+        # el comentario del recorder.stop() más arriba) -- con libtorrent
+        # embebido en el proceso ya no hay un aria2c.exe aparte que esperar
+        # a que se apague, así que en la práctica ya no bloquea nada.
         self.download_panel.shutdown(on_wait=process_events_during_shutdown)
         self._taskbar.cleanup()
         shutdown_workers(FetchWorker.active_workers())
