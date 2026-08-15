@@ -17,7 +17,6 @@ installer_output/
 # Binarios que se piden a mano (ver README): ffmpeg.exe pesa ~97 MB,
 # cerca del límite duro de 100 MB por archivo de GitHub. No se versionan.
 resources/ffmpeg/*.exe
-resources/aria2/*.exe
 
 # Datos de usuario / entorno local
 *.log
