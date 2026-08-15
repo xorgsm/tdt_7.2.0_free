@@ -110,17 +110,24 @@ def check_due(parse_time_fn) -> List[Reminder]:
     pendientes = load_reminders()
     disparados = []
     quedan = []
+    cambiado = False
 
     for r in pendientes:
         inicio = parse_time_fn(r.start)
         if inicio is None:
+            cambiado = True
             continue  # hora corrupta; se descarta en vez de avisar mal
         if inicio <= ahora <= inicio + MARGEN_TOLERANCIA:
             disparados.append(r)
+            cambiado = True
         elif inicio > ahora:
             quedan.append(r)  # todavía no toca, se mantiene pendiente
-        # si inicio + MARGEN_TOLERANCIA < ahora: ya pasó de largo, se descarta
+        else:
+            cambiado = True  # ya pasó de largo; se descarta sin avisar
 
-    if disparados:
+    # Antes solo se guardaba si algo disparó en esta misma llamada -- un
+    # aviso corrupto o pasado de largo sin ningún otro disparando a la vez
+    # se quedaba en disco para siempre en vez de limpiarse.
+    if cambiado:
         _save(quedan)
     return disparados

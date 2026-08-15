@@ -1,0 +1,43 @@
+# Config de ruff para TDT & Radio VIP (Coder By X@R).
+#
+# Conjunto de reglas deliberadamente conservador para una primera pasada:
+# errores reales (pyflakes) y estilo básico (pycodestyle), sin imponer un
+# reordenado de imports (I) ni reglas de estilo más agresivas que
+# generarían un diff enorme sin relación con ningún cambio funcional.
+# Se puede ampliar más adelante si Xor quiere ir más estricto.
+
+target-version = "py312"
+line-length = 110
+
+exclude = [
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    "resources",
+    "__pycache__",
+    ".pytest_cache",
+    ".superpowers",
+]
+
+[lint]
+select = [
+    "E",   # pycodestyle (errores)
+    "F",   # pyflakes (imports/variables sin usar, etc.)
+    "W",   # pycodestyle (avisos)
+]
+ignore = [
+    "E501",  # línea larga -- ya cubierto en parte por line-length, pero
+             # algunas cadenas QSS/f-strings largas no merecen partirse.
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["F401"]  # fixtures importadas solo por su efecto secundario
+# main.py / main_free.py llaman a core.bootstrap.bootstrap() ANTES de
+# importar ui.main_window / player.vlc_player a propósito (ver CLAUDE.md:
+# fija AppUserModelID y prepara VLC_PLUGIN_PATH antes de que nada importe
+# libvlc). Mover esos imports arriba del todo, como pide E402, rompería
+# ese orden -- se ignora deliberadamente en estos dos archivos, no en el
+# resto del proyecto.
+"main.py" = ["E402"]
+"main_free.py" = ["E402"]
