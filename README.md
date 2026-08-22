@@ -9,6 +9,21 @@ DLNA/UPnP).
 Esta es la **versión free**: todas las funciones están activas desde el
 primer arranque, sin código de activación ni pantalla de bienvenida.
 
+## ⬇️ Descargar (recomendado)
+
+**[Descargar TDT & Radio VIP Free 7.5.7 portable (ZIP, ~152 MB)](https://github.com/xorgsm/TDTRadioVIP-Free/releases/download/v7.5.7/TDTRadioVIP_Free_v7.5.7_portable.zip)**
+
+Sin instalación: descomprime el ZIP y ejecuta `TDTRadioVIP_Free.exe`.
+Incluye todo lo necesario (libVLC y ffmpeg) — no hace falta tener VLC
+instalado. Solo Windows 10/11 de 64 bits.
+
+Todas las versiones y sus novedades:
+[página de releases](https://github.com/xorgsm/TDTRadioVIP-Free/releases).
+
+> Nota: el código fuente de este repositorio corresponde a la versión
+> 7.2.0; las releases contienen los ejecutables de las versiones más
+> recientes.
+
 ## Fuentes de datos (gratuitas y públicas)
 
 - **TV**: lista m3u pública de [iptv-org](https://github.com/iptv-org/iptv),
