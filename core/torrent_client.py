@@ -123,6 +123,13 @@ class TorrentClient:
         self._session = None
         self._handles: Dict[str, "lt.torrent_handle"] = {}
         self._nombres_pendientes: Dict[str, str] = {}
+        # Ver el mismo flag en core.soulseek_client.SoulseekClient: si
+        # cerrar() se ejecuta mientras _ConnectWorker sigue dentro de
+        # conectar() (en otro QThread), sin esto conectar() podría acabar
+        # creando una sesión de libtorrent nueva DESPUÉS de que cerrar() ya
+        # haya limpiado el estado -- esa sesión quedaría sin que nadie
+        # vuelva a liberarla.
+        self._cerrando = False
 
     @property
     def conectado(self) -> bool:
@@ -130,6 +137,8 @@ class TorrentClient:
 
     def conectar(self) -> Optional[str]:
         if self.conectado:
+            return None
+        if self._cerrando:
             return None
         if lt is None:
             return f"No se pudo cargar el motor de torrents (libtorrent): {LIBTORRENT_IMPORT_ERROR}"
@@ -158,6 +167,12 @@ class TorrentClient:
             log.exception("No se pudo crear la sesión de libtorrent")
             self._session = None
             return f"No se pudo arrancar el motor de torrents: {exc}"
+
+        if self._cerrando:
+            # cerrar() se disparó mientras lt.session(...) construía la
+            # sesión: no dejarla viva sin que nadie vaya a liberarla.
+            self._session = None
+            return None
         return None
 
     def anadir(self, magnet_o_ruta: str, carpeta_destino: str) -> Optional[str]:
@@ -265,6 +280,7 @@ class TorrentClient:
         mientras aria2c se apagaba); ya no hace falta invocarlo porque
         cerrar() no bloquea.
         """
+        self._cerrando = True
         self._handles.clear()
         self._nombres_pendientes.clear()
         self._session = None

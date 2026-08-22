@@ -680,6 +680,10 @@ class TorrentPanel(QWidget):
 
     def shutdown(self, on_wait=None):
         self._poll_timer.stop()
+        # cerrar() primero (ver el mismo orden y motivo en
+        # ui/soulseek_panel.py): marca al cliente como cerrándose antes de
+        # esperar a _connect_worker, para que conectar() no pueda crear una
+        # sesión de libtorrent nueva justo después de este cierre.
+        self.client.cerrar(on_wait=on_wait)
         if self._connect_worker is not None and self._connect_worker.isRunning():
             self._connect_worker.wait(1000)
-        self.client.cerrar(on_wait=on_wait)

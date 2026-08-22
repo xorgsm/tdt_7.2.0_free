@@ -26,6 +26,7 @@ import requests
 from PySide6.QtCore import QThread, Signal
 
 from core.config import get_app_data_dir
+from core.json_store import write_json_atomic
 from core.logger import get_logger
 
 log = get_logger(__name__)
@@ -81,10 +82,7 @@ def load_feeds() -> List[PodcastFeed]:
 
 def _save_feeds(feeds: List[PodcastFeed]) -> None:
     try:
-        _feeds_path().write_text(
-            json.dumps([asdict(f) for f in feeds], ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        write_json_atomic(_feeds_path(), [asdict(f) for f in feeds], indent=2)
     except OSError:
         pass
 
@@ -160,10 +158,7 @@ def fetch_episodes(feed_url: str, force_refresh: bool = False, limit: int = 60) 
 
     if episodios:
         try:
-            cache_path.write_text(
-                json.dumps([asdict(e) for e in episodios], ensure_ascii=False),
-                encoding="utf-8",
-            )
+            write_json_atomic(cache_path, [asdict(e) for e in episodios])
         except OSError:
             pass
         return episodios

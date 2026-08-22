@@ -2,3 +2,5 @@
 pytest>=7.4
 pytest-cov>=5.0
 ruff>=0.6
+pip-audit>=2.7
+pyinstaller>=6.0

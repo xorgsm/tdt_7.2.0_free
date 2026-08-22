@@ -20,8 +20,9 @@ from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 from core import backup as backup_module
 from core import channels as tv_channels
 from core import favorites as fav_store
+from core.playlist_export import export_m3u
 from core import radio as radio_stations
-from ui.dialogs import AddEntryDialog, ImportPlaylistDialog, ManageChannelsDialog
+from ui.dialogs import AddEntryDialog, ExportPlaylistDialog, ImportPlaylistDialog, ManageChannelsDialog, RecordingsLibraryDialog
 from ui.fetch_worker import FetchWorker
 from ui.toast import show_toast
 
@@ -31,6 +32,10 @@ class LibraryController:
 
     def __init__(self, window):
         self.win = window
+
+    def open_recordings_library(self):
+        """Abre la biblioteca local usando la carpeta configurada actualmente."""
+        RecordingsLibraryDialog(self.win.recordings_dir, self.win).exec()
 
     # ---------- Añadir / editar / eliminar manual ----------
 
@@ -400,6 +405,38 @@ class LibraryController:
             f"Se han encontrado {len(parsed)} canales en la lista y se han añadido {added} nuevos "
             f"({len(parsed) - added} ya estaban en tu lista)."
         )
+
+    def export_current_playlist(self):
+        """Exporta TV y radio visibles a una lista M3U reutilizable."""
+        win = self.win
+        entries = [
+            {"name": channel.name, "url": channel.url, "logo": channel.logo,
+             "group": channel.group, "tvg_id": channel.tvg_id}
+            for channel in win.tv_channels_data
+        ] + [
+            {"name": station.name, "url": station.url, "logo": station.favicon,
+             "tags": station.tags}
+            for station in win.radio_stations_data
+        ]
+        preview = ExportPlaylistDialog(entries, win)
+        if preview.exec() != QDialog.Accepted:
+            return
+        entries = preview.entries_for_export()
+        if not entries:
+            QMessageBox.information(win, "Lista vacía", "No has seleccionado ningún stream para exportar.")
+            return
+        destination, _ = QFileDialog.getSaveFileName(
+            win, "Exportar lista M3U", "TDTRadioVIP_lista.m3u", "Listas M3U (*.m3u)"
+        )
+        if not destination:
+            return
+        try:
+            count = export_m3u(entries, destination)
+        except OSError as exc:
+            QMessageBox.warning(win, "No se pudo exportar", str(exc))
+            return
+        win.statusBar().showMessage(f"Exportados {count} streams a una lista M3U.", 6000)
+        QMessageBox.information(win, "Lista M3U exportada", f"Se exportaron {count} streams en:\n{destination}")
 
     # ---------- Copia de seguridad ----------
 

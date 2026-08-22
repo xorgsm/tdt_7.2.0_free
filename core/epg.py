@@ -30,6 +30,7 @@ from typing import Dict, List, Optional, Tuple
 import requests
 
 from core.config import get_app_data_dir
+from core.json_store import write_json_atomic
 
 CACHE_FILE = "epg_cache.json"
 CACHE_TTL_SECONDS = 6 * 3600
@@ -156,12 +157,9 @@ def fetch_epg(epg_url: str, force_refresh: bool = False) -> Dict[str, List[Progr
 
     if guide:
         try:
-            cache_path.write_text(
-                json.dumps(
-                    {cid: [asdict(p) for p in progs] for cid, progs in guide.items()},
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
+            write_json_atomic(
+                cache_path,
+                {cid: [asdict(p) for p in progs] for cid, progs in guide.items()},
             )
         except OSError:
             # Sin permisos o disco lleno: no es motivo para tirar la guía ya

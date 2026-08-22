@@ -6,7 +6,7 @@ import os
 import subprocess
 
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QFontMetrics
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMessageBox, QProgressBar,
@@ -14,7 +14,11 @@ from PySide6.QtWidgets import (
 )
 
 from core.downloader import DownloadWorker, SearchWorker, SEARCH_SOURCES, UpdateCheckWorker
+from ui.audio_converter_panel import AudioConverterPanel
+from ui.mp3_editor_panel import Mp3EditorPanel
+from ui.mp3_tag_editor_panel import Mp3TagEditorPanel
 from ui.podcast_panel import PodcastPanel
+from ui.soulseek_panel import SoulseekPanel
 from ui.torrent_panel import TorrentPanel
 from ui.visual import set_variant, set_visual_state
 
@@ -153,12 +157,13 @@ class DownloadPanel(QWidget):
         lbl.setObjectName("mediaMeta")
         dest_row.addWidget(lbl)
 
-        self.dest_label = QLabel(self.dest_dir)
+        self.dest_label = QLabel()
         self.dest_label.setObjectName("mediaPath")
         self.dest_label.setMaximumWidth(320)
+        self._set_dest_label_text(self.dest_dir)
         dest_row.addWidget(self.dest_label, stretch=1)
 
-        anchos = {"Cambiar": 72, "Abrir": 60, "Actualizar": 90}
+        anchos = {"Cambiar": 72, "Abrir": 60, "Actualizar": 110}
         for texto, tooltip, accion in (
             ("Cambiar",    "Cambiar carpeta de descargas",         self._change_dest),
             ("Abrir",      "Abrir carpeta en el explorador",       lambda: self._open_folder(self.dest_dir)),
@@ -212,7 +217,31 @@ class DownloadPanel(QWidget):
         self.podcast_panel = PodcastPanel(self.dest_dir, on_play=self.on_play_audio)
         self.tabs.addTab(self.podcast_panel, "Podcasts")
 
+        self.soulseek_panel = SoulseekPanel(self.dest_dir, on_dest_changed=self._on_soulseek_dest_changed)
+        self.tabs.addTab(self.soulseek_panel, "Soulseek")
+
+        self.audio_converter_panel = AudioConverterPanel(
+            self.dest_dir, on_dest_changed=self._on_converter_dest_changed
+        )
+        self.tabs.addTab(self.audio_converter_panel, "Convertir")
+
+        self.mp3_editor_panel = Mp3EditorPanel()
+        self.tabs.addTab(self.mp3_editor_panel, "Editor MP3")
+
+        self.mp3_tag_editor_panel = Mp3TagEditorPanel()
+        self.tabs.addTab(self.mp3_tag_editor_panel, "Editar info")
+
     # ---------- carpeta destino ----------
+
+    def _set_dest_label_text(self, directory: str):
+        """Elide la ruta al ancho máximo del label -- una ruta larga sin
+        elidir fuerza el sizeHint natural del QLabel (que no recorta solo
+        por tener maximumWidth) y desborda la fila de botones en ventanas
+        estrechas."""
+        metrics = QFontMetrics(self.dest_label.font())
+        elidido = metrics.elidedText(directory, Qt.ElideMiddle, self.dest_label.maximumWidth())
+        self.dest_label.setText(elidido)
+        self.dest_label.setToolTip(directory)
 
     def _change_dest(self):
         directory = QFileDialog.getExistingDirectory(
@@ -220,9 +249,11 @@ class DownloadPanel(QWidget):
         )
         if directory:
             self.dest_dir = directory
-            self.dest_label.setText(directory)
+            self._set_dest_label_text(directory)
             self.torrent_panel.set_dest_dir(directory)
             self.podcast_panel.set_dest_dir(directory)
+            self.soulseek_panel.set_dest_dir(directory)
+            self.audio_converter_panel.set_dest_dir(directory)
             if self.on_dest_changed:
                 self.on_dest_changed(directory)
 
@@ -230,8 +261,20 @@ class DownloadPanel(QWidget):
         """Espejo de _change_dest, pero disparado desde la pestaña de
         Torrents — mantiene la carpeta sincronizada en los dos sentidos."""
         self.dest_dir = directory
-        self.dest_label.setText(directory)
+        self._set_dest_label_text(directory)
         self.podcast_panel.set_dest_dir(directory)
+        if self.on_dest_changed:
+            self.on_dest_changed(directory)
+
+    def _on_soulseek_dest_changed(self, directory: str):
+        self.dest_dir = directory
+        self._set_dest_label_text(directory)
+        if self.on_dest_changed:
+            self.on_dest_changed(directory)
+
+    def _on_converter_dest_changed(self, directory: str):
+        self.dest_dir = directory
+        self._set_dest_label_text(directory)
         if self.on_dest_changed:
             self.on_dest_changed(directory)
 
@@ -494,7 +537,7 @@ class DownloadPanel(QWidget):
 
     def _on_update_checked(self, ok: bool, mensaje: str):
         self.update_btn.setEnabled(True)
-        self.update_btn.setText("Actualizar yt-dlp")
+        self.update_btn.setText("Actualizar")
         self._set_status(mensaje, error=not ok)
 
     # ---------- cierre ordenado ----------
@@ -517,3 +560,7 @@ class DownloadPanel(QWidget):
                 worker.wait(3000)
         self.podcast_panel.shutdown()
         self.torrent_panel.shutdown(on_wait=on_wait)
+        self.soulseek_panel.shutdown(on_wait=on_wait)
+        self.audio_converter_panel.shutdown(on_wait=on_wait)
+        self.mp3_editor_panel.shutdown(on_wait=on_wait)
+        self.mp3_tag_editor_panel.shutdown(on_wait=on_wait)

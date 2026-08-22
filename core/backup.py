@@ -33,6 +33,7 @@ _ARCHIVOS_PERFIL = {
     "history.json": "history",
     "tv_channels_custom.json": "custom_tv_channels",
     "radio_stations_custom.json": "custom_radio_stations",
+    "stream_health.json": "stream_health",
     "torrent_history.json": "torrent_history",
 }
 
@@ -92,7 +93,7 @@ def import_backup(origen: str) -> list[str]:
     for _file_name, key, _directory in files:
         if key not in datos:
             continue
-        expected_type = dict if key == "settings" else list
+        expected_type = dict if key in {"settings", "stream_health"} else list
         if not isinstance(datos[key], expected_type):
             raise ValueError(f"La sección {key!r} no tiene un tipo válido.")
 

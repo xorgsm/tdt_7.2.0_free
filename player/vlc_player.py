@@ -318,6 +318,16 @@ class VLCPlayer(QFrame):
     # reventar la reproducción por esto.
 
     def _walk_track_descriptions(self, descs):
+        """
+        Recorre la lista enlazada en C y la libera con
+        libvlc_track_description_list_release() antes de devolver el
+        resultado -- audio_get_track_description(), video_get_track_description()
+        y video_get_spu_description() (los tres llamantes) documentan que
+        quien recibe la lista es responsable de liberarla; sin esto, cada
+        apertura del menú de pistas (o cada cambio de canal, que lo repuebla)
+        filtraba la lista C entera -- justo la clase de fuga de memoria de
+        libVLC que este proyecto ya tuvo que arreglar una vez.
+        """
         tracks = []
         node = descs
         while node:
@@ -328,6 +338,11 @@ class VLCPlayer(QFrame):
             nombre = item.name.decode("utf-8", "replace") if item.name else str(item.id)
             tracks.append((item.id, nombre))
             node = item.next
+        if descs:
+            try:
+                vlc.libvlc_track_description_list_release(descs)
+            except Exception:
+                log.warning("No se pudo liberar la lista de descripciones de pistas", exc_info=True)
         return tracks
 
     def audio_tracks(self):

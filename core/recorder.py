@@ -99,7 +99,7 @@ class Recorder:
             return ""
         return texto[-max_chars:].strip()
 
-    def start(self, stream_url: str, channel_name: str) -> Path:
+    def start(self, stream_url: str, channel_name: str, kind: str = "tv") -> Path:
         if self.process is not None:
             raise RuntimeError("Ya hay una grabación en curso.")
 
@@ -109,9 +109,15 @@ class Recorder:
                 "No se encontró ffmpeg, necesario para grabar."
             )
 
+        es_radio = kind == "radio"
         safe_name = "".join(c for c in channel_name if c.isalnum() or c in " _-").strip()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{safe_name or 'grabacion'}_{timestamp}.mp4"
+        # Las emisoras de radio son streams solo de audio: .mp4 es un
+        # contenedor pensado para vídeo, y da igual el códec de audio que
+        # traiga el stream (MP3, AAC, Opus...) porque Matroska los admite
+        # todos vía copy sin arriesgarse a un contenedor que rechace alguno.
+        ext = "mka" if es_radio else "mp4"
+        filename = f"{safe_name or 'grabacion'}_{timestamp}.{ext}"
         self.current_file = self.output_dir / filename
         self.current_log = self.current_file.with_suffix(".log")
 
@@ -126,33 +132,43 @@ class Recorder:
             "-i", stream_url,
         ]
 
-        usar_marca_agua = os.path.exists(_WATERMARK_FONT)
-        if usar_marca_agua:
-            texto = _escape_drawtext(channel_name or "TDT & Radio VIP")
-            # Esquina inferior derecha, semitransparente, con una caja detrás
-            # para que se lea igual sobre fondos claros que oscuros.
-            # fontfile lleva SOLO el nombre de archivo, sin ruta -- ver el
-            # porqué en el comentario de _WATERMARK_FONT_DIR más arriba.
-            # ffmpeg lo busca junto al cwd del proceso, que se fija más
-            # abajo al lanzar Popen.
-            drawtext = (
-                f"drawtext=fontfile={_WATERMARK_FONT_NAME}:text='{texto}':"
-                "fontsize=18:fontcolor=white@0.8:"
-                "box=1:boxcolor=black@0.45:boxborderw=6:"
-                "x=w-text_w-16:y=h-text_h-16"
-            )
-            # Con marca de agua ya no vale el stream copy de vídeo: hay que
-            # re-codificar para "quemar" el texto en la imagen. El audio
-            # sigue en copy, que es lo que de verdad pesa en CPU.
-            cmd += [
-                "-vf", drawtext,
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-                "-c:a", "copy",
-            ]
+        usar_marca_agua = False
+        if es_radio:
+            # Nada de marca de agua ni pipeline de vídeo aquí: un stream de
+            # radio no trae pista de vídeo sobre la que "quemar" texto (el
+            # filtro drawtext exige un flujo de vídeo real, y aplicarlo
+            # contra un stream solo-audio hace que ffmpeg muera al arrancar).
+            # -vn descarta explícitamente cualquier vídeo que pudiera venir
+            # de todos modos.
+            cmd += ["-vn", "-c:a", "copy"]
         else:
-            # Sin la fuente no se puede quemar el texto; se graba igual, sin
-            # marca de agua, en vez de dejar al usuario sin grabación.
-            cmd += ["-c", "copy"]
+            usar_marca_agua = os.path.exists(_WATERMARK_FONT)
+            if usar_marca_agua:
+                texto = _escape_drawtext(channel_name or "TDT & Radio VIP")
+                # Esquina inferior derecha, semitransparente, con una caja detrás
+                # para que se lea igual sobre fondos claros que oscuros.
+                # fontfile lleva SOLO el nombre de archivo, sin ruta -- ver el
+                # porqué en el comentario de _WATERMARK_FONT_DIR más arriba.
+                # ffmpeg lo busca junto al cwd del proceso, que se fija más
+                # abajo al lanzar Popen.
+                drawtext = (
+                    f"drawtext=fontfile={_WATERMARK_FONT_NAME}:text='{texto}':"
+                    "fontsize=18:fontcolor=white@0.8:"
+                    "box=1:boxcolor=black@0.45:boxborderw=6:"
+                    "x=w-text_w-16:y=h-text_h-16"
+                )
+                # Con marca de agua ya no vale el stream copy de vídeo: hay que
+                # re-codificar para "quemar" el texto en la imagen. El audio
+                # sigue en copy, que es lo que de verdad pesa en CPU.
+                cmd += [
+                    "-vf", drawtext,
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                    "-c:a", "copy",
+                ]
+            else:
+                # Sin la fuente no se puede quemar el texto; se graba igual, sin
+                # marca de agua, en vez de dejar al usuario sin grabación.
+                cmd += ["-c", "copy"]
 
         # No se fuerza aac_adtstoasc: ese filtro solo admite AAC y hace que
         # FFmpeg rechace canales perfectamente válidos con audio E-AC-3. El

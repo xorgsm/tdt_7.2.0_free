@@ -9,6 +9,7 @@ from typing import List
 import requests
 
 from core.config import get_app_data_dir, get_profile_data_dir
+from core.json_store import write_json_atomic
 
 CUSTOM_FILE = "radio_stations_custom.json"
 # Emisoras de la lista PÚBLICA (Radio-Browser) ocultas a mano por el
@@ -93,10 +94,7 @@ def fetch_radio_stations(country_code: str = "ES", limit: int = 250, force_refre
         ]
         if stations:
             try:
-                cache_path.write_text(
-                    json.dumps([asdict(s) for s in stations], ensure_ascii=False),
-                    encoding="utf-8",
-                )
+                write_json_atomic(cache_path, [asdict(s) for s in stations])
             except OSError:
                 pass  # no poder cachear no invalida los datos ya obtenidos
             return stations
@@ -108,9 +106,7 @@ def _save_custom(stations: List[Station]) -> None:
     """Punto único de guardado de la lista personalizada."""
     path = get_profile_data_dir() / CUSTOM_FILE
     try:
-        path.write_text(
-            json.dumps([asdict(s) for s in stations], ensure_ascii=False), encoding="utf-8"
-        )
+        write_json_atomic(path, [asdict(s) for s in stations])
     except OSError:
         pass
 
@@ -192,9 +188,7 @@ def load_hidden_station_names() -> set:
 
 def _save_hidden(names: set) -> None:
     try:
-        _hidden_path().write_text(
-            json.dumps(sorted(names), ensure_ascii=False), encoding="utf-8"
-        )
+        write_json_atomic(_hidden_path(), sorted(names))
     except OSError:
         pass
 
@@ -253,7 +247,7 @@ def _load_failcounts() -> dict:
 
 def _save_failcounts(counts: dict) -> None:
     try:
-        _failcount_path().write_text(json.dumps(counts, ensure_ascii=False), encoding="utf-8")
+        write_json_atomic(_failcount_path(), counts)
     except OSError:
         pass
 

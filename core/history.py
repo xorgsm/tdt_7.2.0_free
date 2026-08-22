@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import List
 
 from core.config import get_profile_data_dir
+from core.json_store import write_json_atomic
 
 HISTORY_FILE = "history.json"
 MAX_ENTRIES = 100
@@ -39,9 +40,7 @@ def load_history() -> List[dict]:
 
 def _save(history: List[dict]) -> None:
     try:
-        _path().write_text(
-            json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        write_json_atomic(_path(), history, indent=2)
     except OSError:
         pass
 

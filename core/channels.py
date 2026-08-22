@@ -13,6 +13,7 @@ from typing import List
 import requests
 
 from core.config import get_app_data_dir, get_profile_data_dir
+from core.json_store import write_json_atomic
 
 CUSTOM_FILE = "tv_channels_custom.json"
 # Nombres de canales de la lista PÚBLICA (iptv-org/URL de país, no los
@@ -129,10 +130,7 @@ def fetch_tv_channels(playlist_url: str, force_refresh: bool = False) -> List[Ch
         channels = parse_m3u(resp.text)
         if channels:
             try:
-                cache_path.write_text(
-                    json.dumps([asdict(c) for c in channels], ensure_ascii=False),
-                    encoding="utf-8",
-                )
+                write_json_atomic(cache_path, [asdict(c) for c in channels])
             except OSError:
                 pass  # no poder cachear no invalida la lista ya descargada
             return channels
@@ -146,9 +144,7 @@ def _save_custom(channels: List[Channel]) -> None:
     """Punto único de guardado de la lista personalizada."""
     path = get_profile_data_dir() / CUSTOM_FILE
     try:
-        path.write_text(
-            json.dumps([asdict(c) for c in channels], ensure_ascii=False), encoding="utf-8"
-        )
+        write_json_atomic(path, [asdict(c) for c in channels])
     except OSError:
         pass
 
@@ -253,9 +249,7 @@ def load_hidden_channel_names() -> set:
 
 def _save_hidden(names: set) -> None:
     try:
-        _hidden_path().write_text(
-            json.dumps(sorted(names), ensure_ascii=False), encoding="utf-8"
-        )
+        write_json_atomic(_hidden_path(), sorted(names))
     except OSError:
         pass
 
@@ -328,7 +322,7 @@ def _load_failcounts() -> dict:
 
 def _save_failcounts(counts: dict) -> None:
     try:
-        _failcount_path().write_text(json.dumps(counts, ensure_ascii=False), encoding="utf-8")
+        write_json_atomic(_failcount_path(), counts)
     except OSError:
         pass
 

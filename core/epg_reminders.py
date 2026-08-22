@@ -13,7 +13,8 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from typing import List
 
-from core.config import get_app_data_dir
+from core.config import get_profile_data_dir
+from core.json_store import write_json_atomic
 
 REMINDERS_FILE = "epg_reminders.json"
 
@@ -32,7 +33,15 @@ class Reminder:
 
 
 def _path():
-    return get_app_data_dir() / REMINDERS_FILE
+    # Por perfil, como las grabaciones programadas (core/recording_schedule.py)
+    # -- son avisos de "esto empieza ahora" ligados a lo que ve cada persona,
+    # no un ajuste de la instalación. Antes vivían en get_app_data_dir()
+    # (global): con varios perfiles, un aviso creado por uno podía disparar
+    # en la sesión de otro. Como cada aviso caduca solo (MARGEN_TOLERANCIA,
+    # 15 min) no hace falta migrar nada -- lo que hubiera pendiente en el
+    # archivo global antiguo simplemente deja de comprobarse y nunca llega
+    # a molestar.
+    return get_profile_data_dir() / REMINDERS_FILE
 
 
 def load_reminders() -> List[Reminder]:
@@ -58,10 +67,7 @@ def load_reminders() -> List[Reminder]:
 
 def _save(reminders: List[Reminder]) -> None:
     try:
-        _path().write_text(
-            json.dumps([asdict(r) for r in reminders], ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        write_json_atomic(_path(), [asdict(r) for r in reminders], indent=2)
     except OSError:
         pass
 

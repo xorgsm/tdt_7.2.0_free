@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 from typing import List
 
 from core.config import get_profile_data_dir
+from core.json_store import write_json_atomic
 
 SCHEDULE_FILE = "epg_recordings.json"
 
@@ -72,10 +73,7 @@ def load_scheduled() -> List[ScheduledRecording]:
 
 def _save(items: List[ScheduledRecording]) -> None:
     try:
-        _path().write_text(
-            json.dumps([asdict(i) for i in items], ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        write_json_atomic(_path(), [asdict(i) for i in items], indent=2)
     except OSError:
         pass
 
@@ -127,7 +125,13 @@ def check_starts_due(parse_time_fn) -> List[ScheduledRecording]:
             continue
         inicio = parse_time_fn(r.start)
         if inicio is None:
-            continue  # hora corrupta; se ignora en vez de arrancar algo mal
+            # Hora corrupta: no se puede arrancar, pero dejarla "pending"
+            # la reevaluaría cada 30s para siempre sin que nada cambie
+            # nunca -- se marca "error" (igual que un fallo real al
+            # arrancar) para que quede visible y se pueda quitar a mano.
+            r.status = "error"
+            cambiado = True
+            continue
         if inicio <= ahora <= inicio + MARGEN_INICIO:
             r.status = "recording"
             cambiado = True

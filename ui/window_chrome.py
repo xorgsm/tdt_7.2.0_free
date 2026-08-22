@@ -173,7 +173,6 @@ class WindowChrome:
         win.library_sidebar.setVisible(False)
         win.title_bar.setVisible(False)
         win.statusBar().setVisible(False)
-
         win.fullscreen_btn.setText("✕")
         win.fullscreen_btn.setToolTip("Salir de pantalla completa (Esc)")
         win.showFullScreen()
@@ -223,6 +222,16 @@ class WindowChrome:
         win.content_widget.setMinimumWidth(0)
         win.library_sidebar.setVisible(False)
         win.statusBar().setVisible(False)
+        # El PiP funciona como mini reproductor: conserva transporte y mute,
+        # pero esconde acciones secundarias para no saturar la ventana.
+        win._pip_compact_visibility = {
+            widget: widget.isVisible() for widget in (
+                win.fav_btn, win.cast_btn, win.record_btn, win.more_btn, win.volume_slider,
+            )
+        }
+        for widget in win._pip_compact_visibility:
+            widget.setVisible(False)
+        win.now_playing_bar.setFixedHeight(96)
         # setMinimumSize(1000, 580) del arranque impediría encoger la
         # ventana a un tamaño de ventana flotante — se relaja mientras
         # dure el modo PiP y se restaura al salir.
@@ -234,9 +243,9 @@ class WindowChrome:
         win.pip_btn.setToolTip("Salir de ventana flotante")
 
         win.setWindowFlag(Qt.WindowStaysOnTopHint, True)
-        win.resize(420, 320)
+        win.resize(460, 340)
         pantalla = (win.screen() or QGuiApplication.primaryScreen()).availableGeometry()
-        win.move(pantalla.right() - 440, pantalla.bottom() - 340)
+        win.move(pantalla.right() - 480, pantalla.bottom() - 360)
         win.show()  # obligatorio tras cambiar setWindowFlag en una ventana visible
 
     def exit_pip_mode(self):
@@ -248,6 +257,10 @@ class WindowChrome:
         win.content_widget.setMinimumWidth(420)
         win.library_sidebar.setVisible(win.library_toggle_btn.isChecked())
         win.statusBar().setVisible(True)
+        for widget, was_visible in getattr(win, "_pip_compact_visibility", {}).items():
+            widget.setVisible(was_visible)
+        win._pip_compact_visibility = {}
+        win.now_playing_bar.setFixedHeight(118)
         # Debe coincidir con el mínimo fijado en MainWindow.__init__ -- ver
         # el comentario ahí sobre por qué 900 y no 1000.
         win.setMinimumSize(900, 580)

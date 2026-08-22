@@ -18,21 +18,10 @@ from core import channels as tv_channels
 from core import epg as epg_module
 from core import favorites as fav_store
 from core import radio as radio_stations
-from ui.widgets import ROLE_CUSTOM, ROLE_DATA, ROLE_FAV, ROLE_LOGO, ROLE_PLAYING, ChannelDelegate
-
-# Por encima de esto, se omite la descarga de logos al poblar la lista (se
-# ve el icono genérico de TV/radio en su lugar -- ChannelDelegate ya sabe
-# dibujarlo, ver ui/widgets.py). Una lista de un país normal tiene como
-# mucho unos pocos cientos de canales y nunca se acerca a este límite, pero
-# importar el índice MUNDIAL de iptv-org (index.m3u, varios miles de
-# canales) disparaba un LogoLoader.load() -- y por tanto una petición de
-# red -- por cada uno de golpe: miles de peticiones HTTP/2 concurrentes al
-# mismo servidor de logos, que el servidor acababa rechazando en masa
-# ("Server refused a stream" / "HTTP/2 protocol error" a decenas por
-# segundo) y que dejaba la aplicación entera sin responder mientras tanto
-# -- no solo la lista, cualquier otra ventana o diálogo también, porque el
-# hilo de la interfaz estaba desbordado de señales de red pendientes.
-_MAX_CHANNELS_CON_LOGOS = 600
+from core.stream_health_store import StreamHealthStore, matches_health_filter
+from ui.widgets import (
+    ROLE_CUSTOM, ROLE_DATA, ROLE_FAV, ROLE_HEALTH, ROLE_LOGO, ROLE_PLAYING, ChannelDelegate,
+)
 
 
 class ChannelListsController:
@@ -49,7 +38,14 @@ class ChannelListsController:
 
         def _on_ready(pixmap):
             item.setData(ROLE_LOGO, pixmap)
-            list_widget.viewport().update()
+            # No se repinta toda la lista por cada logo: con catálogos de
+            # miles de entradas eso convertía una cola de red controlada en
+            # miles de repintados completos. Las filas fuera de pantalla se
+            # redibujan solas al hacer scroll, así que solo actualizamos la
+            # parte visible que acaba de recibir su imagen.
+            rect = list_widget.visualItemRect(item)
+            if rect.isValid() and rect.intersects(list_widget.viewport().rect()):
+                list_widget.viewport().update(rect)
 
         self.win.logo_loader.load(url, _on_ready, size=ChannelDelegate.LOGO_SIZE)
 
@@ -67,12 +63,23 @@ class ChannelListsController:
         current, _ = epg_module.get_now_next(win.epg_guide, tvg_id)
         return f"Ahora: {current.title}" if current else ""
 
+    @staticmethod
+    def _health_by_stream() -> dict[tuple[str, str], str]:
+        """Lee una vez el historial persistente para poblar ambas listas."""
+        try:
+            return {
+                (entry["kind"], entry["url"]): entry["status"]
+                for entry in StreamHealthStore().list()
+            }
+        except OSError:
+            return {}
+
     # ---------- Poblado de listas ----------
 
     def populate_tv_list(self, channels_list):
         win = self.win
         custom_names = {c.name for c in tv_channels.load_custom_channels()}
-        cargar_logos = len(channels_list) <= _MAX_CHANNELS_CON_LOGOS
+        health_by_stream = self._health_by_stream()
         # setUpdatesEnabled(False): con listas grandes (importar un M3U de
         # varios miles de canales, o simplemente un país con muchos canales)
         # cada addItem() por separado repintaba y recalculaba el layout de
@@ -104,21 +111,19 @@ class ChannelListsController:
                 item.setData(ROLE_FAV, fav_store.is_favorite(win.favorites, "tv", ch.name))
                 item.setData(ROLE_PLAYING, win.current_type == "tv" and win.current_name == ch.name)
                 item.setData(ROLE_CUSTOM, ch.name in custom_names)
+                item.setData(ROLE_HEALTH, health_by_stream.get(("tv", ch.url)))
                 win.tv_list.addItem(item)
-                if cargar_logos:
-                    self.request_logo(ch.logo, item, win.tv_list)
+                # LogoLoader limita por sí mismo las solicitudes en vuelo y
+                # encola el resto, por lo que no hay que ocultar logos en
+                # listas grandes: todos se descargarán gradualmente.
+                self.request_logo(ch.logo, item, win.tv_list)
         finally:
             win.tv_list.setUpdatesEnabled(True)
-        if not cargar_logos:
-            win.statusBar().showMessage(
-                f"Lista de {len(channels_list)} canales: se omiten los logos "
-                "para no saturar la red (se ven con icono genérico).", 8000
-            )
 
     def populate_radio_list(self, stations_list):
         win = self.win
         custom_names = {s.name for s in radio_stations.load_custom_stations()}
-        cargar_logos = len(stations_list) <= _MAX_CHANNELS_CON_LOGOS
+        health_by_stream = self._health_by_stream()
         win.radio_list.setUpdatesEnabled(False)  # ver comentario en populate_tv_list
         try:
             win.radio_list.clear()
@@ -132,16 +137,11 @@ class ChannelListsController:
                 item.setData(ROLE_FAV, fav_store.is_favorite(win.favorites, "radio", st.name))
                 item.setData(ROLE_PLAYING, win.current_type == "radio" and win.current_name == st.name)
                 item.setData(ROLE_CUSTOM, st.name in custom_names)
+                item.setData(ROLE_HEALTH, health_by_stream.get(("radio", st.url)))
                 win.radio_list.addItem(item)
-                if cargar_logos:
-                    self.request_logo(st.favicon, item, win.radio_list)
+                self.request_logo(st.favicon, item, win.radio_list)
         finally:
             win.radio_list.setUpdatesEnabled(True)
-        if not cargar_logos:
-            win.statusBar().showMessage(
-                f"Lista de {len(stations_list)} emisoras: se omiten los logos "
-                "para no saturar la red (se ven con icono genérico).", 8000
-            )
 
     def refresh_favorites_tab(self):
         win = self.win
@@ -280,6 +280,11 @@ class ChannelListsController:
 
         text = win.search_box.text().strip().lower()
         group = win.group_filter.currentText()
+        # Filtro por estado de salud: solo aplica a TV y Radio, las únicas
+        # listas cuyas filas llevan ROLE_HEALTH (ver populate_tv_list /
+        # populate_radio_list).
+        health_key = win.health_filter.currentData() or "all"
+        aplica_salud = current_widget in (win.tv_list, win.radio_list)
 
         for i in range(current_widget.count()):
             item = current_widget.item(i)
@@ -296,4 +301,7 @@ class ChannelListsController:
                     matches_group = data.get("group") == group
             else:
                 matches_group = True
-            item.setHidden(not (matches_text and matches_group))
+            matches_health = not aplica_salud or matches_health_filter(
+                item.data(ROLE_HEALTH), health_key
+            )
+            item.setHidden(not (matches_text and matches_group and matches_health))

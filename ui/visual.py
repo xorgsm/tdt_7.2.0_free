@@ -16,6 +16,7 @@ VALID_VARIANTS = frozenset({
     "tv",
     "radio",
     "podcast",
+    "download",
 })
 
 VALID_STATES = frozenset({"default", "active", "loading", "empty", "error"})

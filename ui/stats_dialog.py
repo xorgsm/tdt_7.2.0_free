@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 from core import history as history_module
 from ui import palette
+from ui.icons import icon_radio, icon_tv
 from ui.visual import set_surface
 
 
@@ -71,8 +72,6 @@ class StatsDialog(QDialog):
         """Devuelve (item, widget): widget se asigna con setItemWidget()
         en el sitio donde se conoce la QListWidget destino."""
         veces = entrada.get("play_count", 1)
-        glifo = "📺" if entrada.get("type") == "tv" else "📻"
-        texto = f"{glifo}  {entrada.get('name', '')}"
         sufijo = "vez" if veces == 1 else "veces"
 
         widget = QWidget()
@@ -80,7 +79,20 @@ class StatsDialog(QDialog):
         layout.setContentsMargins(10, 6, 10, 6)
         layout.setSpacing(8)
 
-        label = QLabel(texto)
+        es_tv = entrada.get("type") == "tv"
+        icono = QLabel()
+        icono.setObjectName("statsMediaIcon")
+        icono.setFixedSize(22, 22)
+        icono.setPixmap(
+            (icon_tv if es_tv else icon_radio)(
+                palette.ACCENT_INFO if es_tv else palette.ACCENT_CATEGORY_ORANGE,
+                size=20,
+            ).pixmap(20, 20)
+        )
+        icono.setAlignment(Qt.AlignCenter)
+        layout.addWidget(icono)
+
+        label = QLabel(entrada.get("name", ""))
         label.setStyleSheet(f"color: {palette.TEXT_PRIMARY};")
         layout.addWidget(label, stretch=1)
 

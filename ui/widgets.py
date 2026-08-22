@@ -3,6 +3,7 @@ Widgets reutilizables para la interfaz moderna de TDT & Radio VIP.
 """
 import hashlib
 import random
+from collections import deque
 from functools import lru_cache
 
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, QUrl
@@ -19,6 +20,7 @@ ROLE_LOGO = Qt.UserRole + 1
 ROLE_PLAYING = Qt.UserRole + 2
 ROLE_FAV = Qt.UserRole + 3
 ROLE_CUSTOM = Qt.UserRole + 4
+ROLE_HEALTH = Qt.UserRole + 5
 
 # Paleta de acento por categoría (Deportes, Infantiles, Noticias...). No es
 # un mapeo fijo nombre->color: con canales internacionales las categorías
@@ -136,10 +138,9 @@ class LogoLoader:
     de red por canal DE GOLPE -- cientos de peticiones HTTP concurrentes
     al mismo servidor, que ralentizan tanto la red como la cola de señales
     del hilo de la interfaz mientras van llegando las respuestas. Es la
-    misma familia de problema que ya causó el cuelgue al importar el
-    índice mundial de iptv-org (miles de canales, ver
-    _MAX_CHANNELS_CON_LOGOS en ui/channel_lists_controller.py), a menor
-    escala pero real igualmente con listas de un solo país ya grandes.
+    misma familia de problema que podría causar un catálogo mundial de
+    miles de canales, a menor escala pero real igualmente con listas de un
+    solo país ya grandes.
     Las peticiones de más se encolan y se lanzan según van terminando las
     anteriores, sin cambiar nada de cara a quien llama a load().
     """
@@ -151,7 +152,8 @@ class LogoLoader:
         self.cache_dir = get_app_data_dir() / "cache" / "logos"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._replies = []
-        self._pendientes = []  # cola de (url, callback, size, cache_file) sin lanzar aún
+        self._pendientes = deque()  # URLs únicas pendientes; popleft() es O(1)
+        self._solicitudes = {}  # url -> (cache_file, [(callback, size), ...])
         self._en_vuelo = 0
 
     def load(self, url: str, callback, size: int = 44):
@@ -164,28 +166,42 @@ class LogoLoader:
                 callback(rounded_pixmap(pix, size, size // 4))
                 return
 
-        if self._en_vuelo >= self._MAX_CONCURRENTES:
-            self._pendientes.append((url, callback, size, cache_file))
+        solicitud = self._solicitudes.get(url)
+        if solicitud is not None:
+            solicitud[1].append((callback, size))
             return
-        self._lanzar(url, callback, size, cache_file)
 
-    def _lanzar(self, url: str, callback, size: int, cache_file):
+        self._solicitudes[url] = (cache_file, [(callback, size)])
+        if self._en_vuelo >= self._MAX_CONCURRENTES:
+            self._pendientes.append(url)
+            return
+        self._lanzar(url)
+
+    def _lanzar(self, url: str):
+        cache_file, callbacks = self._solicitudes[url]
         self._en_vuelo += 1
         request = QNetworkRequest(QUrl(url))
         reply = self.manager.get(request)
         self._replies.append(reply)
 
         def _on_finished():
+            pix = QPixmap()
             try:
                 if reply.error() == QNetworkReply.NetworkError.NoError:
                     data = reply.readAll()
-                    pix = QPixmap()
                     if pix.loadFromData(data):
                         pix.save(str(cache_file))
-                        callback(rounded_pixmap(pix, size, size // 4))
+                        redondeados = {}
+                        for callback, size in callbacks:
+                            logo = redondeados.get(size)
+                            if logo is None:
+                                logo = rounded_pixmap(pix, size, size // 4)
+                                redondeados[size] = logo
+                            callback(logo)
             except RuntimeError:
                 pass
             finally:
+                self._solicitudes.pop(url, None)
                 if reply in self._replies:
                     self._replies.remove(reply)
                 reply.deleteLater()
@@ -195,19 +211,25 @@ class LogoLoader:
         reply.finished.connect(_on_finished)
 
     def _lanzar_siguiente_pendiente(self):
-        # Bucle, no un solo "if": si varios elementos en cola compartían la
-        # misma URL, el primero que termine ya deja el logo en caché, y los
-        # siguientes de la cola con esa misma URL se resuelven al vuelo
-        # desde disco en vez de disparar una descarga duplicada.
         while self._pendientes and self._en_vuelo < self._MAX_CONCURRENTES:
-            url, callback, size, cache_file = self._pendientes.pop(0)
+            url = self._pendientes.popleft()
+            solicitud = self._solicitudes.get(url)
+            if solicitud is None:
+                continue
+            cache_file, callbacks = solicitud
             if cache_file.exists():
                 pix = QPixmap(str(cache_file))
                 if not pix.isNull():
-                    callback(rounded_pixmap(pix, size, size // 4))
+                    redondeados = {}
+                    for callback, size in callbacks:
+                        logo = redondeados.get(size)
+                        if logo is None:
+                            logo = rounded_pixmap(pix, size, size // 4)
+                            redondeados[size] = logo
+                        callback(logo)
+                    self._solicitudes.pop(url, None)
                     continue
-            self._lanzar(url, callback, size, cache_file)
-
+            self._lanzar(url)
 
 class EqualizerWidget(QWidget):
     """Ecualizador animado que sustituye al vídeo cuando se escucha radio."""
@@ -485,6 +507,7 @@ class ChannelDelegate(QStyledItemDelegate):
         data = index.data(ROLE_DATA) or {}
         is_playing = bool(index.data(ROLE_PLAYING))
         is_fav = bool(index.data(ROLE_FAV))
+        health_status = index.data(ROLE_HEALTH)
         is_hover = bool(option.state & QStyle.State_MouseOver)
         logo = index.data(ROLE_LOGO)
 
@@ -618,6 +641,20 @@ class ChannelDelegate(QStyledItemDelegate):
         painter.drawText(name_rect.translated(0, 1), Qt.AlignVCenter | Qt.AlignLeft, elided)
         painter.setPen(QColor(palette.ACCENT_LIGHTER) if is_playing else QColor("#ffffff"))
         painter.drawText(name_rect, Qt.AlignVCenter | Qt.AlignLeft, elided)
+
+        # Punto de salud persistente: la comprobación se guarda aparte y
+        # no dispara ninguna llamada de red al pintar una fila.
+        health_colors = {
+            "stable": QColor("#48c78e"),
+            "slow": QColor("#f4c95d"),
+            "down": QColor("#ef6b73"),
+            "restricted": QColor("#ef6b73"),
+        }
+        if health_status in health_colors:
+            health_rect = QRectF(name_rect.right() - 8, name_rect.center().y() - 4, 8, 8)
+            painter.setPen(QPen(QColor(10, 14, 20, 210), 1))
+            painter.setBrush(health_colors[health_status])
+            painter.drawEllipse(health_rect)
 
         # "subtitle" antes de "group": los canales de TV ahora traen un
         # subtítulo ya compuesto ("Categoría · Ahora: Programa" o solo uno

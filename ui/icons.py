@@ -16,6 +16,8 @@ versiones — una para el fondo oscuro normal y otra para el fondo dorado — y
 se cambia el icono al hacer toggle, igual que antes se cambiaba el color del
 texto vía QSS ":checked".
 """
+from functools import lru_cache
+
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QIcon, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 
@@ -38,6 +40,7 @@ def _stroke_painter(pm: QPixmap, color: str, width: float = 1.6) -> QPainter:
     return p
 
 
+@lru_cache(maxsize=128)
 def icon_home(color: str, size: int = 26) -> QIcon:
     """Casa sencilla: triángulo de tejado + cuerpo rectangular, mismo trazo
     lineal que el resto de iconos de la barra lateral."""
@@ -57,6 +60,7 @@ def icon_home(color: str, size: int = 26) -> QIcon:
     return QIcon(pm)
 
 
+@lru_cache(maxsize=128)
 def icon_tv(color: str, size: int = 26) -> QIcon:
     pm = _blank(size)
     p = _stroke_painter(pm, color)
@@ -68,6 +72,7 @@ def icon_tv(color: str, size: int = 26) -> QIcon:
     return QIcon(pm)
 
 
+@lru_cache(maxsize=128)
 def icon_radio(color: str, size: int = 26) -> QIcon:
     pm = _blank(size)
     p = _stroke_painter(pm, color)
@@ -81,6 +86,7 @@ def icon_radio(color: str, size: int = 26) -> QIcon:
     return QIcon(pm)
 
 
+@lru_cache(maxsize=128)
 def icon_history(color: str, size: int = 26) -> QIcon:
     pm = _blank(size)
     p = _stroke_painter(pm, color)
@@ -93,6 +99,7 @@ def icon_history(color: str, size: int = 26) -> QIcon:
     return QIcon(pm)
 
 
+@lru_cache(maxsize=128)
 def icon_cast(color: str, size: int = 26) -> QIcon:
     pm = _blank(size)
     p = _stroke_painter(pm, color)
@@ -107,6 +114,7 @@ def icon_cast(color: str, size: int = 26) -> QIcon:
     return QIcon(pm)
 
 
+@lru_cache(maxsize=128)
 def icon_moon(color: str, size: int = 26) -> QIcon:
     pm = _blank(size)
     p = QPainter(pm)
@@ -123,6 +131,7 @@ def icon_moon(color: str, size: int = 26) -> QIcon:
     return QIcon(pm)
 
 
+@lru_cache(maxsize=128)
 def icon_speaker(color: str, size: int = 26, muted: bool = False) -> QIcon:
     pm = _blank(size)
     p = QPainter(pm)
@@ -150,6 +159,7 @@ def icon_speaker(color: str, size: int = 26, muted: bool = False) -> QIcon:
     return QIcon(pm)
 
 
+@lru_cache(maxsize=128)
 def icon_pip(color: str, size: int = 26) -> QIcon:
     """Rectángulo grande (la pantalla) con uno pequeño superpuesto abajo a
     la derecha (la ventana flotante) — el icono estándar de picture-in-picture."""
@@ -164,6 +174,7 @@ def icon_pip(color: str, size: int = 26) -> QIcon:
     return QIcon(pm)
 
 
+@lru_cache(maxsize=128)
 def icon_queue(color: str, size: int = 26) -> QIcon:
     """Icono de "cola de reproducción": tres líneas de listado de ancho
     decreciente con un triángulo de play a la derecha, mismo lenguaje visual
@@ -188,6 +199,7 @@ def icon_queue(color: str, size: int = 26) -> QIcon:
     return QIcon(pm)
 
 
+@lru_cache(maxsize=128)
 def icon_library(color: str, size: int = 26) -> QIcon:
     """Icono de "biblioteca": tres barras verticales de alturas distintas,
     como lomos de discos/libros en una estantería."""
@@ -207,6 +219,7 @@ def icon_library(color: str, size: int = 26) -> QIcon:
     return QIcon(pm)
 
 
+@lru_cache(maxsize=128)
 def icon_more(color: str, size: int = 26) -> QIcon:
     """Icono de "más opciones": tres puntos horizontales, para el botón
     que agrupa los controles secundarios de la barra de reproducción
@@ -225,6 +238,7 @@ def icon_more(color: str, size: int = 26) -> QIcon:
     return QIcon(pm)
 
 
+@lru_cache(maxsize=128)
 def icon_grid_view(color: str, size: int = 26) -> QIcon:
     """Icono de "ver en cuadrícula": cuatro cuadrados en disposición 2x2.
 
@@ -251,6 +265,7 @@ def icon_grid_view(color: str, size: int = 26) -> QIcon:
     return QIcon(pm)
 
 
+@lru_cache(maxsize=128)
 def icon_list_view(color: str, size: int = 26) -> QIcon:
     """Icono de "ver en lista": tres líneas horizontales con un pequeño
     marcador a la izquierda de cada una, complemento de icon_grid_view()

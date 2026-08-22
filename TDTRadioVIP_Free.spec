@@ -48,8 +48,8 @@ datas = [
 ]
 
 # ffprobe.exe (~97 MB) no se usa en el código — solo ffmpeg, en
-# core/recorder.py. No aporta nada empaquetado y en --onefile hay que
-# descomprimirlo entero en cada arranque.
+# core/recorder.py. No aporta nada empaquetado y solo engordaría la
+# carpeta de salida --onedir en ~97 MB sin motivo.
 
 ICONO = os.path.join("resources", "icon.ico")
 if os.path.isfile(ICONO):

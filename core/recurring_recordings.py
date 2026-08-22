@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from core import recording_schedule
-from core.config import get_app_data_dir
+from core.config import get_profile_data_dir
 from core.json_store import read_json, write_json_atomic
 
 RULES_FILE = "recurring_recordings.json"
@@ -43,11 +43,17 @@ class RecurringRule:
 
 
 def _rules_path():
-    return get_app_data_dir() / RULES_FILE
+    # Por perfil, como recording_schedule.py (que ya inserta las grabaciones
+    # concretas de cada regla ahí) -- antes vivían en get_app_data_dir()
+    # (global), así que una regla creada en un perfil se sincronizaba
+    # también en la sesión de cualquier otro. El perfil "Default" ES
+    # get_app_data_dir() (ver core/config.py), así que quien no usa
+    # perfiles adicionales no nota ningún cambio: sus reglas ya estaban ahí.
+    return get_profile_data_dir() / RULES_FILE
 
 
 def _sync_path():
-    return get_app_data_dir() / SYNC_STATE_FILE
+    return get_profile_data_dir() / SYNC_STATE_FILE
 
 
 def _validate_rule(rule: RecurringRule) -> None:

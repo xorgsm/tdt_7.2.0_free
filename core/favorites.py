@@ -9,6 +9,7 @@ import json
 from typing import List, Optional
 
 from core.config import get_profile_data_dir
+from core.json_store import write_json_atomic
 
 FAVORITES_FILE = "favorites.json"
 
@@ -37,9 +38,7 @@ def load_favorites() -> List[dict]:
 
 def _save(favorites: List[dict]) -> None:
     try:
-        _path().write_text(
-            json.dumps(favorites, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        write_json_atomic(_path(), favorites, indent=2)
     except OSError:
         pass  # sin permisos o disco lleno: no es motivo para romper la sesión
 

@@ -186,12 +186,13 @@ QPushButton#homeQuickButtonAlt[uiVariant="radio"] {{
     color: {palette.ACCENT_CATEGORY_ORANGE};
     border: 1px solid {palette.ACCENT_CATEGORY_ORANGE};
 }}
-QLabel#sectionTitle[uiVariant="success"] {{ color: {palette.SUCCESS}; }}
+QLabel#sectionTitle[uiVariant="success"] {{ color: {ACCENT_PRESETS['Verde']}; }}
 QLabel#sectionTitle[uiVariant="tv"] {{ color: {palette.ACCENT_INFO}; }}
 QLabel#sectionTitle[uiVariant="radio"] {{ color: {palette.ACCENT_CATEGORY_ORANGE}; }}
 QLabel#sectionTitle[uiVariant="primary"] {{ color: {shades['base']}; }}
-QLabel#sectionTitle[uiVariant="sleep"] {{ color: {palette.ACCENT_SLEEP}; }}
+QLabel#sectionTitle[uiVariant="sleep"] {{ color: {ACCENT_PRESETS['Violeta']}; }}
 QLabel#sectionTitle[uiVariant="cast"] {{ color: {palette.ACCENT_CAST}; }}
+QLabel#sectionTitle[uiVariant="download"] {{ color: {ACCENT_PRESETS['Coral']}; }}
 QLabel#liveBadge {{
     background-color: {palette.DANGER};
     color: #ffffff;
@@ -221,8 +222,22 @@ QFrame#carouselCard:hover {{
     background-color: {palette.BG_HOVER};
     border-color: {palette.BORDER_STRONG};
 }}
-QFrame#carouselCard[uiVariant="tv"] {{ border-bottom: 3px solid {palette.ACCENT_INFO}; }}
-QFrame#carouselCard[uiVariant="radio"] {{ border-bottom: 3px solid {palette.ACCENT_CATEGORY_ORANGE}; }}
+QFrame#carouselCard[uiVariant="tv"] {{
+    background-color: {accent_shades(palette.ACCENT_INFO)['soft']};
+    border-bottom: 3px solid {palette.ACCENT_INFO};
+}}
+QFrame#carouselCard[uiVariant="radio"] {{
+    background-color: {accent_shades(palette.ACCENT_CATEGORY_ORANGE)['soft']};
+    border-bottom: 3px solid {palette.ACCENT_CATEGORY_ORANGE};
+}}
+QFrame#carouselCard[uiVariant="tv"]:hover {{
+    background-color: {palette.BG_HOVER};
+    border-color: {palette.BORDER_STRONG};
+}}
+QFrame#carouselCard[uiVariant="radio"]:hover {{
+    background-color: {palette.BG_HOVER};
+    border-color: {palette.BORDER_STRONG};
+}}
 QFrame#carouselCard QLabel {{ background: transparent; }}
 QLabel#carouselLogo {{ background-color: {palette.BG_PANEL}; border-radius: 10px; }}
 QLabel#carouselName {{ color: {palette.TEXT_PRIMARY}; font-size: 9pt; font-weight: 650; }}
@@ -327,7 +342,7 @@ QLabel#mediaMeta {{ color: {palette.TEXT_DIM}; font-size: 8pt; }}
 QLabel#mediaPath {{ color: {palette.ACCENT_INFO}; font-size: 8pt; }}
 QLabel#mediaSection {{ color: {palette.TEXT_MUTED}; font-weight: 700; font-size: 8.5pt; }}
 QLabel#mediaRowIcon {{ font-size: 15pt; }}
-QLabel#mediaRowTitle {{ color: {palette.TEXT_PRIMARY}; font-weight: 650; }}
+QLabel#mediaRowTitle {{ color: {palette.TEXT_PRIMARY}; font-weight: 650; font-size: 9pt; }}
 QLabel#mediaRowMeta {{ color: {palette.TEXT_SECONDARY}; font-size: 7.5pt; }}
 QLabel#mediaRowDetail {{ color: {palette.TEXT_DIM}; font-size: 7.5pt; }}
 QDialog[uiSurface="dialog"] {{
@@ -394,6 +409,33 @@ QDialog QPushButton#btn_continuar {{
     border-radius: 10px;
 }}
 """
+    # Color propio por sección en el botón de navegación seleccionado --
+    # antes usaba siempre el degradado del acento elegido por el usuario
+    # (vía los tokens #e0bb4a/#b3891c en DARK_STYLE), perdiendo la
+    # distinción por categoría que sí tienen el icono y el título de
+    # sección. "primary" (Favoritos) no está aquí a propósito: para esa
+    # sección SÍ es correcto seguir usando el acento del usuario. Estos
+    # valores deben reflejar SECTION_COLORS de ui/main_window.py -- no se
+    # importan desde aquí para evitar un ciclo de imports (main_window ya
+    # importa de este módulo).
+    nav_variant_colors = {
+        "success": ACCENT_PRESETS["Verde"],
+        "tv": palette.ACCENT_INFO,
+        "radio": palette.ACCENT_CATEGORY_ORANGE,
+        "sleep": ACCENT_PRESETS["Violeta"],
+        "download": ACCENT_PRESETS["Coral"],
+    }
+    for variant, color in nav_variant_colors.items():
+        nav_shades = accent_shades(color)
+        style += f"""
+QToolButton#navButton[uiVariant="{variant}"]:checked {{
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {nav_shades['light']}, stop:1 {nav_shades['dark']});
+    color: {nav_shades['on_accent']};
+    border-left: 3px solid {nav_shades['lighter']};
+}}
+"""
+
     return style
 
 

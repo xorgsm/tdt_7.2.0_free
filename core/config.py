@@ -17,11 +17,7 @@ logger = logging.getLogger(__name__)
 
 APP_NAME = "TDTRadioVIP"
 APP_ORG = "CoderByXR"
-APP_VERSION = "7.3.0"
-# Correo al que el cliente envía su ID de equipo para pedir el código de
-# activación. Centralizado aquí para no tener que buscarlo por el código
-# si algún día cambia.
-SUPPORT_EMAIL = "xordj2020@gmail.com"
+APP_VERSION = "7.5.7"
 
 SETTINGS_FILE = "settings.json"
 
@@ -108,7 +104,7 @@ def get_app_data_dir() -> Path:
 # nuevo no nota ningún cambio -- sus datos ya estaban ahí. Solo los
 # perfiles adicionales que cree el usuario viven en su propia subcarpeta.
 #
-# No todo se separa por perfil: settings.json, license.json, logs, cache/
+# No todo se separa por perfil: settings.json, logs, cache/
 # y tools/ siguen siendo compartidos (son ajustes de la instalación, no
 # datos de "quién los usa"), igual que la guía EPG y los podcasts
 # suscritos. Solo lo que de verdad identifica a una persona -- favoritos,
@@ -154,10 +150,21 @@ def set_current_profile(profile: str) -> bool:
     return save_settings(settings)
 
 
+_PROFILE_NAME_CHARS_PROHIBIDOS = set('\\/:*?"<>|')
+
+
 def create_profile(name: str) -> str:
     """Crea (si no existía) el perfil `name` y devuelve su nombre ya
-    saneado (sin espacios sobrantes)."""
+    saneado (sin espacios sobrantes).
+
+    El nombre se usa tal cual como componente de carpeta bajo
+    profiles/ (ver _profile_dir_for) -- sin validar, un nombre como
+    "..\\Otro" o "../../Escritorio" escaparía de esa carpeta y
+    crearía/escribiría rutas fuera del árbol de datos de la app.
+    """
     name = name.strip()
+    if not name or name in (".", "..") or _PROFILE_NAME_CHARS_PROHIBIDOS & set(name):
+        raise ValueError(f"Nombre de perfil no válido: {name!r}")
     _profile_dir_for(name)  # crea la carpeta y la deja en caché
     return name
 

@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QDialog, QGraphicsOpacityEffect, QLineEdit, QListWidget, QListWidgetItem, QVBoxLayout,
 )
 
+from core.universal_search import normalize, search_catalog
 from ui.visual import set_surface
 
 ROLE_RESULT = Qt.UserRole + 60
@@ -63,37 +64,35 @@ class CommandPalette(QDialog):
     # ---------- Búsqueda ----------
 
     def _refresh(self, query: str):
-        query = (query or "").strip().lower()
+        query = normalize(query)
         self.results.clear()
 
         for label, callback in self._actions:
-            if not query or query in label.lower():
+            if not query or query in normalize(label):
                 item = QListWidgetItem(f"→ {label}")
                 item.setData(ROLE_RESULT, ("accion", callback))
                 self.results.addItem(item)
 
         if query:
-            # tv_channels_data / radio_stations_data guardan instancias de
-            # los dataclasses Channel / Station (core/channels.py,
-            # core/radio.py) — acceso por atributo, no por .get() como los
-            # dict que sí usan los QListWidgetItem de las listas normales.
-            count = self.results.count()
-            for ch in self.win.tv_channels_data:
-                if count >= MAX_RESULTS:
-                    break
-                if query in ch.name.lower():
-                    item = QListWidgetItem(f"TV · {ch.name}")
-                    item.setData(ROLE_RESULT, ("tv", ch))
-                    self.results.addItem(item)
-                    count += 1
-            for st in self.win.radio_stations_data:
-                if count >= MAX_RESULTS:
-                    break
-                if query in st.name.lower():
-                    item = QListWidgetItem(f"FM · {st.name}")
-                    item.setData(ROLE_RESULT, ("radio", st))
-                    self.results.addItem(item)
-                    count += 1
+            available = max(0, MAX_RESULTS - self.results.count())
+            matches = search_catalog(
+                query,
+                self.win.tv_channels_data,
+                self.win.radio_stations_data,
+                self.win.favorites,
+                self.win.history,
+                available,
+            )
+            for match in matches:
+                prefix = "TV" if match["kind"] == "tv" else "RADIO"
+                item = QListWidgetItem(f'{prefix} · {match["name"]}  —  {match["subtitle"]}')
+                item.setData(ROLE_RESULT, (match["kind"], match["payload"]))
+                self.results.addItem(item)
+
+            if self.results.count() == 0:
+                empty = QListWidgetItem("Sin resultados. Prueba con otro nombre, categoría o país.")
+                empty.setFlags(Qt.NoItemFlags)
+                self.results.addItem(empty)
 
         if self.results.count() > 0:
             self.results.setCurrentRow(0)
@@ -101,17 +100,25 @@ class CommandPalette(QDialog):
     def _activate_item(self, item: QListWidgetItem):
         if item is None:
             return
-        kind, payload = item.data(ROLE_RESULT)
+        result = item.data(ROLE_RESULT)
+        if not result:
+            return
+        kind, payload = result
         if kind == "accion":
             self.close()
             payload()
             return
-        if kind == "tv" and payload.url:
+        url = payload.get("url", "") if isinstance(payload, dict) else payload.url
+        name = payload.get("name", "") if isinstance(payload, dict) else payload.name
+        if kind == "tv" and url:
             self.close()
-            self.win.playback.play(kind, payload.name, payload.url, payload.tvg_id, payload.logo)
-        elif kind == "radio" and payload.url:
+            tvg_id = payload.get("tvg_id", "") if isinstance(payload, dict) else payload.tvg_id
+            logo = payload.get("logo", "") if isinstance(payload, dict) else payload.logo
+            self.win.playback.play(kind, name, url, tvg_id, logo)
+        elif kind == "radio" and url:
             self.close()
-            self.win.playback.play(kind, payload.name, payload.url, "", payload.favicon)
+            logo = payload.get("logo", "") if isinstance(payload, dict) else payload.favicon
+            self.win.playback.play(kind, name, url, "", logo)
 
     # ---------- Navegación por teclado ----------
 

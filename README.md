@@ -21,8 +21,7 @@ Todas las versiones y sus novedades:
 [página de releases](https://github.com/xorgsm/TDTRadioVIP-Free/releases).
 
 > Nota: el código fuente de este repositorio corresponde a la versión
-> 7.2.0; las releases contienen los ejecutables de las versiones más
-> recientes.
+> 7.5.7, la misma que el ejecutable de la release.
 
 ## Fuentes de datos (gratuitas y públicas)
 

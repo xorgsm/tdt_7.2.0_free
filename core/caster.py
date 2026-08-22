@@ -10,11 +10,14 @@ aunque esa sesión no se usara Chromecast ni una vez.
 
 Coder By X@R
 """
+import hmac
 import mimetypes
 import os
 import re
+import secrets
 import socket
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from PySide6.QtCore import QThread, Signal
@@ -73,10 +76,26 @@ class _SingleFileHandler(BaseHTTPRequestHandler):
     (HTTP 206). El Chromecast pide rangos para poder avanzar/retroceder y
     para reproducir archivos grandes, y manda un HEAD previo para sondear
     tipo y tamaño: ambos casos deben responderse correctamente.
+
+    do_GET/do_HEAD ignoran a propósito qué ruta se pidió -- solo hay un
+    archivo posible, el ligado a esta clase (ver LocalFileServer.serve) --
+    así que no hay path traversal posible. Pero eso significa que
+    CUALQUIER petición a este puerto, sea cual sea la ruta, devuelve el
+    archivo completo: mientras el servidor está activo (todo el rato que
+    dura el casting), cualquier equipo en la misma red local podría
+    descargarlo si conoce o adivina el puerto. El token en la query string
+    (comparado con hmac.compare_digest, no con ==, para no filtrar su
+    valor por temporización) reduce eso a quien tenga la URL exacta que se
+    le pasó al Chromecast.
     """
     filepath = ""
     content_type = "application/octet-stream"
+    token = ""
     protocol_version = "HTTP/1.1"  # requerido para que el rango/keep-alive funcionen
+
+    def _token_valido(self) -> bool:
+        recibido = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("t", [""])[0]
+        return hmac.compare_digest(recibido, self.token)
 
     def _parse_range(self, size):
         """Devuelve (inicio, fin) inclusivos, o None si no hay Range utilizable."""
@@ -103,6 +122,9 @@ class _SingleFileHandler(BaseHTTPRequestHandler):
         return inicio, fin
 
     def _responder(self, con_cuerpo: bool):
+        if not self._token_valido():
+            self.send_error(403, "Forbidden")
+            return
         try:
             size = os.path.getsize(self.filepath)
         except OSError:
@@ -174,10 +196,14 @@ class LocalFileServer:
         """Arranca el servidor para 'filepath'. Devuelve (url_lan, content_type)."""
         self.stop()
         content_type = mimetypes.guess_type(filepath)[0] or "application/octet-stream"
+        # Token de un solo uso por sesión de casting -- ver el porqué en el
+        # docstring de _SingleFileHandler. Solo quien tenga esta URL exacta
+        # (el Chromecast al que se la pasamos) puede pedir el archivo.
+        token = secrets.token_urlsafe(16)
 
         handler_cls = type(
             "_BoundFileHandler", (_SingleFileHandler,),
-            {"filepath": filepath, "content_type": content_type},
+            {"filepath": filepath, "content_type": content_type, "token": token},
         )
         self._httpd = ThreadingHTTPServer(("0.0.0.0", 0), handler_cls)
         self.port = self._httpd.server_address[1]
@@ -185,7 +211,7 @@ class LocalFileServer:
         self._thread.start()
 
         filename = os.path.basename(filepath)
-        url = f"http://{_local_lan_ip()}:{self.port}/{filename}"
+        url = f"http://{_local_lan_ip()}:{self.port}/{filename}?t={token}"
         return url, content_type
 
     def stop(self):

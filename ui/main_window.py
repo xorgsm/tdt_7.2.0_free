@@ -53,6 +53,7 @@ from ui.onboarding import OnboardingDialog
 from ui.mosaic_view import MosaicView
 from ui.recurring_dialog import RecurringRecordingsDialog
 from ui.stats_dialog import StatsDialog
+from ui.stream_diagnostics_dialog import StreamDiagnosticsDialog
 from ui.tray_controller import TrayReminderController
 from ui.media_keys import (
     HOTKEY_NEXT, HOTKEY_PLAY_PAUSE, HOTKEY_PREV, HOTKEY_STOP, SystemMediaKeys,
@@ -93,7 +94,7 @@ SECTION_COLORS = {
     NAV_RADIO: palette.ACCENT_CATEGORY_ORANGE,
     NAV_FAV: palette.ACCENT,
     NAV_HIST: ACCENT_PRESETS["Violeta"],
-    NAV_DOWNLOAD: palette.ACCENT_CAST,
+    NAV_DOWNLOAD: ACCENT_PRESETS["Coral"],
 }
 SECTION_VARIANTS = {
     NAV_HOME: "success",
@@ -101,7 +102,7 @@ SECTION_VARIANTS = {
     NAV_RADIO: "radio",
     NAV_FAV: "primary",
     NAV_HIST: "sleep",
-    NAV_DOWNLOAD: "cast",
+    NAV_DOWNLOAD: "download",
 }
 DEFAULT_DOWNLOADS_DIRNAME = "TDT Radio VIP"
 
@@ -167,7 +168,8 @@ class MainWindow(QMainWindow):
         self.downloads_dir = self.settings.get("downloads_dir") or str(
             Path.home() / "Downloads" / DEFAULT_DOWNLOADS_DIRNAME
         )
-        self.recorder = rec_module.Recorder(self.downloads_dir)
+        self.recordings_dir = self.settings.get("recordings_dir") or self.downloads_dir
+        self.recorder = rec_module.Recorder(self.recordings_dir)
         # Grabación programada actualmente en curso (ScheduledRecording),
         # o None si self.recorder está libre o grabando algo manual. Sirve
         # para que _check_scheduled_recordings() sepa cuál cerrar cuando
@@ -503,6 +505,28 @@ class MainWindow(QMainWindow):
         self.tv_view_toggle.toggled.connect(self._toggle_tv_grid_view)
         bar.addWidget(self.tv_view_toggle)
 
+        # Filtro por estado de salud del stream (TV y Radio). Filtra con los
+        # resultados ya guardados del diagnóstico (core/stream_health_store),
+        # sin tocar la red: elegir una opción es instantáneo. El userData de
+        # cada opción es la clave que entiende matches_health_filter().
+        self.health_filter = QComboBox()
+        self.health_filter.setObjectName("groupFilter")
+        for etiqueta, clave in (
+            ("Estado: todos", "all"),
+            ("Estables", "stable"),
+            ("Con incidencias", "issues"),
+            ("Sin diagnosticar", "unchecked"),
+        ):
+            self.health_filter.addItem(etiqueta, clave)
+        self.health_filter.setToolTip(
+            "Filtrar por el último diagnóstico guardado "
+            "(Archivo > Diagnosticar canales y emisoras…)"
+        )
+        self.health_filter.currentIndexChanged.connect(self.lists.filter_current_list)
+        self.health_filter.setMinimumWidth(110)
+        self.health_filter.setMaximumWidth(160)
+        bar.addWidget(self.health_filter)
+
         self.group_filter = QComboBox()
         self.group_filter.setObjectName("groupFilter")
         self.group_filter.addItem("Todas las categorías")
@@ -611,6 +635,29 @@ class MainWindow(QMainWindow):
         subtitle = QLabel("Elige algo para ver o escuchar, o retoma donde lo dejaste.")
         subtitle.setObjectName("dialogSubtitle")
         hero_layout.addWidget(subtitle)
+
+        self.home_now_card = QFrame()
+        self.home_now_card.setObjectName("dialogPanel")
+        self.home_now_card.setProperty("uiSurface", "homeSectionCard")
+        now_layout = QHBoxLayout(self.home_now_card)
+        now_layout.setContentsMargins(14, 10, 14, 10)
+        now_text = QVBoxLayout()
+        self.home_now_title = QLabel("Nada en reproducción")
+        self.home_now_title.setObjectName("nowTitle")
+        self.home_now_subtitle = QLabel("Busca cualquier canal o emisora con Ctrl+K")
+        self.home_now_subtitle.setObjectName("nowSubtitle")
+        now_text.addWidget(self.home_now_title)
+        now_text.addWidget(self.home_now_subtitle)
+        now_layout.addLayout(now_text, 1)
+        self.home_resume_btn = QPushButton("Buscar")
+        set_variant(self.home_resume_btn, "primary")
+        self.home_resume_btn.clicked.connect(self._home_resume_or_search)
+        now_layout.addWidget(self.home_resume_btn)
+        self.home_float_btn = QPushButton("Ventana flotante")
+        self.home_float_btn.clicked.connect(self.window_chrome.toggle_pip_mode)
+        self.home_float_btn.setVisible(False)
+        now_layout.addWidget(self.home_float_btn)
+        hero_layout.addWidget(self.home_now_card)
 
         quick_row = QHBoxLayout()
         quick_row.setSpacing(10)
@@ -726,6 +773,29 @@ class MainWindow(QMainWindow):
         scroll.setWidget(content)
         return scroll
 
+    def _home_resume_or_search(self):
+        if self.current_url:
+            self.playback.toggle_play()
+            self._refresh_home_now_playing()
+        else:
+            self._open_command_palette()
+
+    def _refresh_home_now_playing(self):
+        """Sincroniza la tarjeta de portada con el reproductor real."""
+        if not hasattr(self, "home_now_title"):
+            return
+        if not self.current_url:
+            self.home_now_title.setText("Nada en reproducción")
+            self.home_now_subtitle.setText("Busca cualquier canal o emisora con Ctrl+K")
+            self.home_resume_btn.setText("Buscar")
+            self.home_float_btn.setVisible(False)
+            return
+        kind = "TV en directo" if self.current_type == "tv" else "Radio online"
+        self.home_now_title.setText(self.current_name or "Reproduciendo")
+        self.home_now_subtitle.setText(kind)
+        self.home_resume_btn.setText("Pausar" if self.player.is_playing() else "Continuar")
+        self.home_float_btn.setVisible(True)
+
     def _refresh_home_page(self):
         """Puebla los carruseles de 'Recientes' y 'Recomendado para ti', y la
         lista de favoritos destacados, con los mismos datos que ya usan sus
@@ -733,6 +803,7 @@ class MainWindow(QMainWindow):
         que nunca se quede desactualizada respecto a lo que se ha
         visto/marcado mientras tanto."""
         custom_tv = {c.name for c in tv_channels.load_custom_channels()}
+        self._refresh_home_now_playing()
         custom_radio = {s.name for s in radio_stations.load_custom_stations()}
 
         self.home_on_air_carousel.set_entries(self.epg.now_on_air_entries())
@@ -1418,6 +1489,10 @@ class MainWindow(QMainWindow):
         refresh_radio_action.triggered.connect(lambda: self._load_radio_stations(force=True))
         file_menu.addAction(refresh_radio_action)
 
+        diagnostics_action = QAction("Diagnosticar canales y emisoras…", self)
+        diagnostics_action.triggered.connect(self._open_stream_diagnostics)
+        file_menu.addAction(diagnostics_action)
+
         file_menu.addSeparator()
         add_entry_action = QAction("Añadir canal o emisora…", self)
         add_entry_action.triggered.connect(self.library.open_add_entry_dialog)
@@ -1427,11 +1502,19 @@ class MainWindow(QMainWindow):
         import_action.triggered.connect(self.library.open_import_playlist_dialog)
         file_menu.addAction(import_action)
 
+        export_playlist_action = QAction("Exportar lista M3U…", self)
+        export_playlist_action.triggered.connect(self.library.export_current_playlist)
+        file_menu.addAction(export_playlist_action)
+
         manage_action = QAction("Gestionar canales personalizados…", self)
         manage_action.triggered.connect(lambda: self.library.open_manage_channels_dialog())
         file_menu.addAction(manage_action)
 
         file_menu.addSeparator()
+        recordings_action = QAction("Biblioteca de grabaciones…", self)
+        recordings_action.triggered.connect(self.library.open_recordings_library)
+        file_menu.addAction(recordings_action)
+
         recurring_action = QAction("Grabaciones recurrentes…", self)
         recurring_action.triggered.connect(self._open_recurring_dialog)
         file_menu.addAction(recurring_action)
@@ -1477,6 +1560,13 @@ class MainWindow(QMainWindow):
         help_menu.addAction(logs_action)
 
         return menu
+
+    def _open_stream_diagnostics(self):
+        dialog = StreamDiagnosticsDialog(self.tv_channels_data, self.radio_stations_data, self)
+        dialog.exec()
+        if dialog.catalog_changed and not self._is_closing:
+            self._load_tv_channels()
+            self._load_radio_stations()
 
     def _open_command_palette(self):
         """
@@ -1587,6 +1677,7 @@ class MainWindow(QMainWindow):
         self.epg_btn.setVisible(nav_id == NAV_TV)
         self.tv_view_toggle.setVisible(nav_id == NAV_TV)
         self.group_filter.setVisible(nav_id in (NAV_TV, NAV_FAV))
+        self.health_filter.setVisible(nav_id in (NAV_TV, NAV_RADIO))
         if nav_id == NAV_TV:
             self.lists.refresh_group_filter()
         elif nav_id == NAV_FAV:
@@ -1646,6 +1737,7 @@ class MainWindow(QMainWindow):
         self.tv_channels_data = tv_channels.dedupe_channels(channels + custom)
         self.lists.refresh_group_filter()
         self.lists.populate_tv_list(self.tv_channels_data)
+        self.lists.filter_current_list()  # ver _on_radio_stations_loaded
         self.statusBar().showMessage(f"{len(self.tv_channels_data)} canales de TV cargados.", 5000)
 
     # _refresh_folder_filter / _refresh_group_filter viven ahora en
@@ -1670,6 +1762,9 @@ class MainWindow(QMainWindow):
         custom = radio_stations.load_custom_stations()
         self.radio_stations_data = stations + custom
         self.lists.populate_radio_list(self.radio_stations_data)
+        # Repoblar deja todas las filas visibles: si había un filtro activo
+        # (búsqueda, categoría o estado de salud), se reaplica.
+        self.lists.filter_current_list()
         self.statusBar().showMessage(f"{len(self.radio_stations_data)} emisoras de radio cargadas.", 5000)
 
     # _open_epg_dialog / _tune_to_tvg_id / _load_epg / _on_epg_loaded viven
@@ -1882,7 +1977,9 @@ class MainWindow(QMainWindow):
                     f"Perfil activo: {new_profile}.\n\n"
                     "Cierra y vuelve a abrir la aplicación para que se aplique del todo."
                 )
-            self.recorder = rec_module.Recorder(self.downloads_dir)
+            self.recordings_dir = self.settings.get("recordings_dir") or self.downloads_dir
+            if not self.recorder.is_recording:
+                self.recorder = rec_module.Recorder(self.recordings_dir)
             if self.settings.get("epg_url"):
                 self.epg.load()
 
@@ -1936,7 +2033,7 @@ class MainWindow(QMainWindow):
             "<b>¡España Campeona del Mundo! "
             "<img src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAB4AAAAUCAIAAAAVyRqTAAAALUlEQVR4nGNcJSrNQBvARCNzR43GBIwf99PK6KEZIKNGjxo9YEYzjhaqw8FoABs0A4rK4LUlAAAAAElFTkSuQmCC' width='24' height='16'> "
             "&#127942; &#128170; ¡OLÉ, LA UCO!</b><br><br>"
-            "Ceuta y Melilla Españolas siempre!. "
+            "Ceuta y Melilla Españolas siempre! Ole Mi Juanito Gordito Y Aitor Super CARS! Edu The Punicher . "
             "<img src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAB4AAAAUCAIAAAAVyRqTAAAALUlEQVR4nGNcJSrNQBvARCNzR43GBIwf99PK6KEZIKNGjxo9YEYzjhaqw8FoABs0A4rK4LUlAAAAAElFTkSuQmCC' width='24' height='16'>"
         )
 

@@ -2,16 +2,20 @@
 Diálogos de la aplicación: preferencias, añadir canal/emisora manual
 e importar listas M3U completas (por URL o archivo local).
 """
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from datetime import datetime
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
-    QButtonGroup, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+    QAbstractItemView, QButtonGroup, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
     QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QMessageBox, QPushButton, QVBoxLayout,
+    QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
 )
 
 from core import config as cfg
 from core import countries
+from core.recording_library import list_recordings
 from ui import palette
 from ui.style import ACCENT_PRESETS, DEFAULT_ACCENT
 from ui.visual import set_surface
@@ -53,6 +57,121 @@ def _header(title: str, subtitle: str) -> QVBoxLayout:
         subtitle_label.setWordWrap(True)
         box.addWidget(subtitle_label)
     return box
+
+
+class RecordingsLibraryDialog(QDialog):
+    """Biblioteca local de grabaciones sin modificar el catálogo de canales."""
+
+    def __init__(self, recordings_dir: str, parent=None):
+        super().__init__(parent)
+        set_surface(self, "dialog")
+        self.setWindowTitle("Biblioteca de grabaciones")
+        self.setMinimumSize(720, 440)
+        self._directory = Path(recordings_dir)
+
+        root = QVBoxLayout(self)
+        root.setSpacing(14)
+        root.setContentsMargins(20, 18, 20, 18)
+        root.addLayout(_header(
+            "Biblioteca de grabaciones",
+            "Tus grabaciones de TV y radio. Puedes abrirlas, mostrar su carpeta o eliminar las que ya no necesites.",
+        ))
+
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Nombre", "Tipo", "Tamaño", "Fecha"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.doubleClicked.connect(self._open_selected)
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(True)
+        self.table.setColumnWidth(0, 300)
+        self.table.setColumnWidth(1, 70)
+        self.table.setColumnWidth(2, 90)
+        root.addWidget(self.table, stretch=1)
+
+        actions = QHBoxLayout()
+        refresh = QPushButton("Actualizar")
+        refresh.clicked.connect(self._reload)
+        actions.addWidget(refresh)
+        open_folder = QPushButton("Abrir carpeta")
+        open_folder.clicked.connect(self._open_folder)
+        actions.addWidget(open_folder)
+        actions.addStretch(1)
+        self.open_btn = QPushButton("Abrir")
+        self.open_btn.clicked.connect(self._open_selected)
+        actions.addWidget(self.open_btn)
+        self.delete_btn = QPushButton("Eliminar seleccionadas")
+        self.delete_btn.clicked.connect(self._delete_selected)
+        actions.addWidget(self.delete_btn)
+        close = QPushButton("Cerrar")
+        close.clicked.connect(self.accept)
+        actions.addWidget(close)
+        root.addLayout(actions)
+        self._reload()
+
+    def _reload(self):
+        self.table.setRowCount(0)
+        for recording in list_recordings(self._directory):
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            name = QTableWidgetItem(recording.path.name)
+            name.setData(Qt.UserRole, str(recording.path))
+            self.table.setItem(row, 0, name)
+            self.table.setItem(row, 1, QTableWidgetItem("Radio" if recording.path.suffix.casefold() == ".mka" else "TV"))
+            self.table.setItem(row, 2, QTableWidgetItem(self._format_size(recording.size)))
+            date = datetime.fromtimestamp(recording.modified).strftime("%d/%m/%Y %H:%M")
+            self.table.setItem(row, 3, QTableWidgetItem(date))
+        is_empty = self.table.rowCount() == 0
+        self.open_btn.setEnabled(not is_empty)
+        self.delete_btn.setEnabled(not is_empty)
+
+    def _selected_paths(self) -> list[Path]:
+        paths = []
+        for index in self.table.selectionModel().selectedRows():
+            value = self.table.item(index.row(), 0).data(Qt.UserRole)
+            if value:
+                paths.append(Path(value))
+        return paths
+
+    def _open_selected(self):
+        paths = self._selected_paths()
+        if paths:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(paths[0])))
+
+    def _open_folder(self):
+        self._directory.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._directory)))
+
+    def _delete_selected(self):
+        paths = self._selected_paths()
+        if not paths:
+            QMessageBox.information(self, "Selecciona grabaciones", "Selecciona una o más grabaciones para eliminarlas.")
+            return
+        if QMessageBox.question(
+            self, "Eliminar grabaciones",
+            f"Vas a eliminar {len(paths)} grabación(es) de forma permanente.\n\n¿Continuar?",
+        ) != QMessageBox.Yes:
+            return
+        errors = 0
+        for path in paths:
+            try:
+                path.unlink()
+                log = path.with_suffix(".log")
+                if log.exists():
+                    log.unlink()
+            except OSError:
+                errors += 1
+        self._reload()
+        if errors:
+            QMessageBox.warning(self, "No se pudieron eliminar todas", f"No se pudieron eliminar {errors} grabación(es).")
+
+    @staticmethod
+    def _format_size(size: int) -> str:
+        if size < 1024 * 1024:
+            return f"{size / 1024:.1f} KB"
+        return f"{size / (1024 * 1024):.1f} MB"
 
 
 class SettingsDialog(QDialog):
@@ -250,7 +369,14 @@ class SettingsDialog(QDialog):
         if nombre in cfg.list_profiles():
             QMessageBox.information(self, "Nuevo perfil", "Ya existe un perfil con ese nombre.")
             return
-        cfg.create_profile(nombre)
+        try:
+            cfg.create_profile(nombre)
+        except ValueError:
+            QMessageBox.warning(
+                self, "Nuevo perfil",
+                "Ese nombre no es válido (no puede contener \\ / : * ? \" < > | ni ser \".\" o \"..\").",
+            )
+            return
         self._reload_perfil_combo(nombre)
 
     def get_settings(self) -> dict:
@@ -396,6 +522,96 @@ class ImportPlaylistDialog(QDialog):
 
     def get_values(self):
         return self.type_combo.currentData(), self.source_input.text().strip()
+
+
+class ExportPlaylistDialog(QDialog):
+    """Vista previa editable antes de exportar TV y radio como M3U."""
+
+    def __init__(self, entries: list[dict], parent=None):
+        super().__init__(parent)
+        set_surface(self, "dialog")
+        self.setWindowTitle("Preparar lista M3U")
+        self.resize(860, 560)
+
+        root = QVBoxLayout(self)
+        root.setSpacing(14)
+        root.setContentsMargins(20, 18, 20, 18)
+        root.addLayout(_header(
+            "Preparar exportación M3U",
+            "Desmarca lo que no quieras incluir o edita nombre, URL y categoría. "
+            "Los cambios solo afectan al archivo exportado, no a tu catálogo.",
+        ))
+
+        self.table = QTableWidget(len(entries), 5)
+        self.table.setHorizontalHeaderLabels(["Incluir", "Tipo", "Nombre", "URL", "Categoría"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setColumnWidth(0, 68)
+        self.table.setColumnWidth(1, 62)
+        self.table.setColumnWidth(2, 180)
+        self.table.setColumnWidth(3, 300)
+        for row, entry in enumerate(entries):
+            include = QTableWidgetItem()
+            include.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+            include.setCheckState(Qt.Checked)
+            self.table.setItem(row, 0, include)
+            kind = QTableWidgetItem("TV" if entry.get("type") == "tv" else "Radio")
+            kind.setFlags(Qt.ItemIsEnabled)
+            self.table.setItem(row, 1, kind)
+            name = QTableWidgetItem(str(entry.get("name", "")))
+            name.setData(Qt.UserRole, dict(entry))
+            self.table.setItem(row, 2, name)
+            self.table.setItem(row, 3, QTableWidgetItem(str(entry.get("url", ""))))
+            self.table.setItem(
+                row, 4, QTableWidgetItem(str(entry.get("group") or entry.get("tags") or ""))
+            )
+        root.addWidget(self.table, 1)
+
+        actions = QHBoxLayout()
+        all_btn = QPushButton("Incluir todo")
+        all_btn.clicked.connect(lambda: self._set_all_checked(Qt.Checked))
+        actions.addWidget(all_btn)
+        none_btn = QPushButton("No incluir nada")
+        none_btn.clicked.connect(lambda: self._set_all_checked(Qt.Unchecked))
+        actions.addWidget(none_btn)
+        remove_btn = QPushButton("Quitar seleccionados")
+        remove_btn.clicked.connect(self._remove_selected_rows)
+        actions.addWidget(remove_btn)
+        actions.addStretch(1)
+        root.addLayout(actions)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Save).setText("Elegir destino…")
+        buttons.button(QDialogButtonBox.Save).setObjectName("primaryButton")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def entries_for_export(self) -> list[dict]:
+        entries = []
+        for row in range(self.table.rowCount()):
+            if self.table.item(row, 0).checkState() != Qt.Checked:
+                continue
+            base = dict(self.table.item(row, 2).data(Qt.UserRole) or {})
+            base["name"] = self.table.item(row, 2).text().strip()
+            base["url"] = self.table.item(row, 3).text().strip()
+            group = self.table.item(row, 4).text().strip()
+            if base.get("type") == "radio":
+                base["tags"] = group
+            else:
+                base["group"] = group
+            entries.append(base)
+        return entries
+
+    def _set_all_checked(self, state):
+        for row in range(self.table.rowCount()):
+            self.table.item(row, 0).setCheckState(state)
+
+    def _remove_selected_rows(self):
+        rows = sorted({item.row() for item in self.table.selectedItems()}, reverse=True)
+        for row in rows:
+            self.table.removeRow(row)
 
 
 class ManageChannelsDialog(QDialog):

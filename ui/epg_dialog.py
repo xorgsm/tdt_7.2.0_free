@@ -96,7 +96,26 @@ class EpgDialog(QDialog):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionMode(QTableWidget.NoSelection)
         self.table.setShowGrid(False)
-        self.table.verticalHeader().setDefaultSectionSize(52)
+        self.table.setStyleSheet(f"""
+            QTableWidget {{
+                background: {palette.EPG_CELL_BG};
+                color: {palette.EPG_CELL_TEXT};
+                border: 1px solid {palette.BORDER};
+                selection-background-color: {palette.EPG_NOW_BG};
+            }}
+            QHeaderView::section {{
+                background: {palette.BG_PANEL_ALT};
+                color: {palette.TEXT_PRIMARY};
+                border: none;
+                border-right: 1px solid {palette.BORDER};
+                border-bottom: 1px solid {palette.BORDER};
+                padding: 8px 10px;
+            }}
+        """)
+        vertical_header = self.table.verticalHeader()
+        vertical_header.setDefaultSectionSize(52)
+        vertical_header.setMinimumWidth(250)
+        vertical_header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
         for col in range(VISIBLE_SLOTS):
             self.table.setColumnWidth(col, SLOT_WIDTH)
@@ -144,7 +163,10 @@ class EpgDialog(QDialog):
             # antes de repintar, o los "span" viejos dejan basura visual.
             for col in range(VISIBLE_SLOTS):
                 self.table.setSpan(row, col, 1, 1)
-                self.table.setItem(row, col, QTableWidgetItem(""))
+                empty_item = QTableWidgetItem("")
+                empty_item.setBackground(QColor(palette.EPG_CELL_BG))
+                empty_item.setForeground(QColor(palette.EPG_CELL_TEXT))
+                self.table.setItem(row, col, empty_item)
 
             programmes = sorted(
                 self.epg_guide.get(channel_key(ch.tvg_id), []), key=lambda p: p.start

@@ -7,6 +7,8 @@ su web se recogen solos, sin depender de que publiquemos una versión nueva.
 
 Coder By X@R
 """
+import hashlib
+import hmac
 import json
 import os
 import subprocess
@@ -23,6 +25,8 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 YT_DLP_RELEASE_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+YT_DLP_CHECKSUMS_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS"
+MAX_TOOL_DOWNLOAD_BYTES = 100 * 1024 * 1024
 UPDATE_CHECK_INTERVAL_SECONDS = 6 * 3600  # no comprobar más de una vez cada 6h
 DOWNLOAD_TIMEOUT_SECONDS = 30
 
@@ -93,27 +97,58 @@ def ensure_yt_dlp(progress_cb=None) -> str:
     truncado que luego se daría por válido y rompería todas las descargas.
     """
     exe_path = _tools_dir() / "yt-dlp.exe"
+    hash_path = exe_path.with_suffix(".exe.sha256")
     if exe_path.exists() and exe_path.stat().st_size > 0:
-        return str(exe_path)
+        try:
+            expected_local = hash_path.read_text(encoding="ascii").strip().lower()
+            actual_local = hashlib.sha256(exe_path.read_bytes()).hexdigest()
+            if hmac.compare_digest(actual_local, expected_local):
+                return str(exe_path)
+        except OSError:
+            pass
+        exe_path.unlink(missing_ok=True)
+        hash_path.unlink(missing_ok=True)
 
     parcial = exe_path.with_suffix(".part")
     peticion = urllib.request.Request(
         YT_DLP_RELEASE_URL, headers={"User-Agent": "TDT-Radio-VIP"}
     )
     try:
+        checksum_request = urllib.request.Request(
+            YT_DLP_CHECKSUMS_URL, headers={"User-Agent": "TDT-Radio-VIP"}
+        )
+        with urllib.request.urlopen(checksum_request, timeout=DOWNLOAD_TIMEOUT_SECONDS) as resp:
+            sums = resp.read(2 * 1024 * 1024).decode("ascii", errors="strict")
+        expected = next(
+            (parts[0].lower() for line in sums.splitlines()
+             if len(parts := line.split()) >= 2 and parts[-1].lstrip("*") == "yt-dlp.exe"),
+            None,
+        )
+        if not expected or len(expected) != 64:
+            raise RuntimeError("La release oficial no contiene el SHA-256 de yt-dlp.exe")
+
+        digest = hashlib.sha256()
         with urllib.request.urlopen(peticion, timeout=DOWNLOAD_TIMEOUT_SECONDS) as resp:
             total = int(resp.headers.get("Content-Length") or 0)
+            if total > MAX_TOOL_DOWNLOAD_BYTES:
+                raise RuntimeError("yt-dlp.exe supera el tamaño máximo permitido")
             bajado = 0
             with open(parcial, "wb") as fh:
                 while True:
                     chunk = resp.read(262144)
                     if not chunk:
                         break
+                    if bajado + len(chunk) > MAX_TOOL_DOWNLOAD_BYTES:
+                        raise RuntimeError("yt-dlp.exe supera el tamaño máximo permitido")
                     fh.write(chunk)
+                    digest.update(chunk)
                     bajado += len(chunk)
                     if progress_cb and total:
                         progress_cb(bajado / total)
+        if not hmac.compare_digest(digest.hexdigest(), expected):
+            raise RuntimeError("El SHA-256 de yt-dlp.exe no coincide con la release oficial")
         os.replace(parcial, exe_path)
+        hash_path.write_text(expected, encoding="ascii")
     except Exception:
         log.exception("Fallo descargando %s a %s", YT_DLP_RELEASE_URL, exe_path)
         try:
@@ -143,22 +178,41 @@ def mark_update_checked():
         pass
 
 
-def self_update_yt_dlp(exe_path: str, timeout: int = 25) -> bool:
+def self_update_yt_dlp(exe_path: str, timeout: int = 25, cancel_check=None) -> bool:
     """
     Pide a yt-dlp que se autoactualice ('yt-dlp -U'). Si no hay red o falla,
     no es un error fatal: se sigue usando la copia que ya había.
+
+    cancel_check: callable opcional que UpdateCheckWorker sondea para poder
+    abortar antes -- con subprocess.run(timeout=...) de antes, cancelar el
+    QThread no tenía forma de interrumpir esta llamada, así que cerrar la
+    app con una comprobación de actualización en marcha podía bloquear el
+    cierre hasta 25s (o dejar el QThread corriendo de fondo si el cierre no
+    esperaba tanto, emitiendo su señal `done` contra un panel ya destruido).
+    Con Popen + sondeo se puede matar el proceso en cuanto se pide cancelar,
+    en vez de esperar a que el propio timeout expire.
     """
     try:
-        result = subprocess.run(
+        proceso = subprocess.Popen(
             [exe_path, "-U"],
-            capture_output=True, text=True, timeout=timeout,
-            encoding="utf-8", errors="replace",
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             creationflags=_CREATE_NO_WINDOW,
         )
-        return result.returncode == 0
     except Exception:
-        log.info("yt-dlp -U no pudo autoactualizarse (sin red, o timeout); se sigue usando la copia actual", exc_info=True)
+        log.info("yt-dlp -U no pudo autoactualizarse (sin red, o fallo al arrancar); se sigue usando la copia actual", exc_info=True)
         return False
+
+    deadline = time.monotonic() + timeout
+    while proceso.poll() is None:
+        if time.monotonic() >= deadline or (cancel_check and cancel_check()):
+            proceso.kill()
+            try:
+                proceso.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            return False
+        time.sleep(0.2)
+    return proceso.returncode == 0
 
 
 # --------------------------------------------------------------------------
@@ -262,14 +316,28 @@ class UpdateCheckWorker(QThread):
     """Fuerza (bajo demanda) una comprobación de actualización de yt-dlp.exe."""
     done = Signal(bool, str)  # éxito, mensaje
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cancelado = False
+
+    def cancel(self):
+        self._cancelado = True
+
     def run(self):
         try:
             exe_path = ensure_yt_dlp()
         except Exception as exc:
-            self.done.emit(False, f"No se pudo descargar yt-dlp.exe: {exc}")
+            if not self._cancelado:
+                self.done.emit(False, f"No se pudo descargar yt-dlp.exe: {exc}")
             return
-        ok = self_update_yt_dlp(exe_path)
+        if self._cancelado:
+            return
+        ok = self_update_yt_dlp(exe_path, cancel_check=lambda: self._cancelado)
         mark_update_checked()
+        if self._cancelado:
+            # No emitir done(): el panel puede estar ya destruyéndose (ver
+            # cancel(), llamado desde DownloadPanel.shutdown()).
+            return
         if ok:
             self.done.emit(True, "yt-dlp está actualizado a la última versión.")
         else:
