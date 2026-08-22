@@ -34,7 +34,6 @@ _ARCHIVOS_PERFIL = {
     "tv_channels_custom.json": "custom_tv_channels",
     "radio_stations_custom.json": "custom_radio_stations",
     "stream_health.json": "stream_health",
-    "torrent_history.json": "torrent_history",
 }
 
 

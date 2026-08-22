@@ -199,7 +199,7 @@ class TrayReminderController:
         muestra como notificación nativa del Centro de actividades) --
         pensado para sitios de la app que quieran avisar de algo aunque la
         ventana esté minimizada, sin tener que reimplementar el icono de
-        bandeja cada vez. Ver DownloadPanel/_on_download_finished en
+        bandeja cada vez. Ver los avisos de grabación en
         ui/main_window.py para el primer uso.
         """
         win = self.win

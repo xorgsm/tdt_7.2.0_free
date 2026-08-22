@@ -226,7 +226,7 @@ class WindowChrome:
         # pero esconde acciones secundarias para no saturar la ventana.
         win._pip_compact_visibility = {
             widget: widget.isVisible() for widget in (
-                win.fav_btn, win.cast_btn, win.record_btn, win.more_btn, win.volume_slider,
+                win.fav_btn, win.record_btn, win.more_btn, win.volume_slider,
             )
         }
         for widget in win._pip_compact_visibility:

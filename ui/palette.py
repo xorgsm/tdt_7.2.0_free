@@ -2,8 +2,7 @@
 Paleta de colores compartida por la interfaz — Coder By X@R.
 
 Antes estos valores vivían repetidos como literales sueltos en varios
-archivos de ui/ (main_window.py, widgets.py, epg_dialog.py, cast_dialog.py,
-splash.py, download_panel.py, torrent_panel.py...). Cambiar un tono
+archivos de ui/ (main_window.py, widgets.py, epg_dialog.py...). Cambiar un tono
 obligaba a buscar y tocar cada coincidencia de texto en vez de un solo
 sitio; con constantes con nombre, se cambia aquí y se propaga sola.
 

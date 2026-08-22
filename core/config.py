@@ -106,8 +106,7 @@ def get_app_data_dir() -> Path:
 #
 # No todo se separa por perfil: settings.json, logs, cache/
 # y tools/ siguen siendo compartidos (son ajustes de la instalación, no
-# datos de "quién los usa"), igual que la guía EPG y los podcasts
-# suscritos. Solo lo que de verdad identifica a una persona -- favoritos,
+# datos de "quién los usa"), igual que la guía EPG. Solo lo que de verdad identifica a una persona -- favoritos,
 # historial, canales/emisoras añadidos a mano y grabaciones programadas --
 # se separa. Ver core/favorites.py, core/history.py, core/channels.py,
 # core/radio.py y core/recording_schedule.py.

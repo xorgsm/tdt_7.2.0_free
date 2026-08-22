@@ -604,7 +604,7 @@ QPushButton#ctrlButton:checked {
     border: 1px solid rgba(255, 255, 255, 40);
 }
 
-/* Enviar a Chromecast/TV: acento propio (teal) al estar activo, para no
+/* Acento teal propio al estar activo, para no
    confundirlo visualmente con "favorito" (dorado) ni con "grabando" (rojo). */
 QPushButton#castButton {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -919,7 +919,7 @@ QPushButton#primaryButton:hover {
         stop:0 #f0cd6e, stop:1 #c9a227);
 }
 
-/* Pestañas (panel de Descargas: "Vídeo (URL)" / "Torrents"). Sin esto,
+/* Pestañas de paneles con QTabWidget. Sin esto,
    QTabWidget usa el estilo nativo de Windows para la barra de pestañas —
    fondo claro con texto claro encima, prácticamente en blanco sobre el
    resto de la interfaz oscura. */

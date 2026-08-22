@@ -28,15 +28,11 @@ from core import history as hist_store
 from core import recorder as rec_module
 from core import recording_schedule
 from core import updater
-from core.caster import CastSession, guess_stream_content_type
-from core.dlna_caster import DLNASession
 from player.vlc_player import VLCPlayer
-from ui.cast_dialog import CastDeviceDialog, BACKEND_CHROMECAST
 from ui.dialogs import SettingsDialog
 from ui.equalizer_dialog import EqualizerDialog
 from ui.style import ACCENT_PRESETS, build_style
 from ui.visual import set_variant
-from ui.download_panel import DownloadPanel
 from ui import palette
 from ui.channel_lists_controller import ChannelListsController
 from ui.carousel import Carousel
@@ -69,7 +65,7 @@ from ui.widgets import (
     ChannelDelegate, ChannelGridDelegate, EqualizerWidget, LogoLoader,
 )
 
-NAV_HOME, NAV_TV, NAV_RADIO, NAV_FAV, NAV_HIST, NAV_DOWNLOAD = range(6)
+NAV_HOME, NAV_TV, NAV_RADIO, NAV_FAV, NAV_HIST = range(5)
 # Títulos cortos a propósito: "Televisión (TDT)" y "Radio online" se
 # comían casi todo el ancho disponible en la barra superior (título +
 # botón Guía + filtro de categoría + buscador en una sola fila), dejando
@@ -81,7 +77,6 @@ SECTION_TITLES = {
     NAV_RADIO: "Radio",
     NAV_FAV: "Favoritos",
     NAV_HIST: "Historial",
-    NAV_DOWNLOAD: "Descargas",
 }
 # Mismo color por sección que ya usan los iconos del riel lateral, para
 # poder pintar con él también el título de la barra superior (más
@@ -94,7 +89,6 @@ SECTION_COLORS = {
     NAV_RADIO: palette.ACCENT_CATEGORY_ORANGE,
     NAV_FAV: palette.ACCENT,
     NAV_HIST: ACCENT_PRESETS["Violeta"],
-    NAV_DOWNLOAD: ACCENT_PRESETS["Coral"],
 }
 SECTION_VARIANTS = {
     NAV_HOME: "success",
@@ -102,7 +96,6 @@ SECTION_VARIANTS = {
     NAV_RADIO: "radio",
     NAV_FAV: "primary",
     NAV_HIST: "sleep",
-    NAV_DOWNLOAD: "download",
 }
 DEFAULT_DOWNLOADS_DIRNAME = "TDT Radio VIP"
 
@@ -112,16 +105,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._is_closing = False
         self.activated = activated
-        # Distingue "activado de verdad con un código" de "versión Free,
-        # desbloqueada por defecto" — main_free.py pasa activated=True para
-        # abrir la reproducción de TV/radio sin pedir código, pero eso no es
-        # lo mismo que un cliente que sí ha activado con su código real.
-        # Descargas y Chromecast (ver más abajo: NAV_DOWNLOAD, cast_btn, y
-        # la entrada "Ir a Descargas" de la paleta de comandos) exigen
-        # además "not es_version_free" -- si no, activated=True en
-        # main_free.py las desbloquearía igual que en un cliente con
-        # licencia real, contradiciendo lo que anuncia el propio diálogo
-        # "Acerca de" ("sin Descargas ni Chromecast").
+        # Edición Free: main_free.py pasa activated=True y es_version_free=True
+        # para abrir la reproducción de TV/radio directamente.
         self.es_version_free = es_version_free
         self.setObjectName("mainWindowRoot")
         self.setWindowTitle(f"TDT & Radio VIP {cfg.APP_VERSION} — Coder By X@R")
@@ -178,8 +163,6 @@ class MainWindow(QMainWindow):
         # si el usuario para a mano una grabación que en realidad venía de
         # la EPG.
         self._scheduled_recording_active: Optional[recording_schedule.ScheduledRecording] = None
-        self._cast_session = CastSession()
-        self._dlna_session = DLNASession()
         self._player_fullscreen = False
         self._was_maximized_before_fs = False
         self._pseudo_maximizado = False
@@ -393,9 +376,8 @@ class MainWindow(QMainWindow):
             (NAV_RADIO, "Radio"),
             (NAV_FAV, "Favoritos"),
             (NAV_HIST, "Historial"),
-            (NAV_DOWNLOAD, "Descargas"),
         ]
-        nav_glyphs = {NAV_FAV: "\u2605", NAV_DOWNLOAD: "\u2B07"}
+        nav_glyphs = {NAV_FAV: "\u2605"}
         for nav_id, tooltip in nav_defs:
             btn = QToolButton()
             btn.setObjectName("navButton")
@@ -420,13 +402,6 @@ class MainWindow(QMainWindow):
                 )
             self.nav_group.addButton(btn, nav_id)
             layout.addWidget(btn)
-            # El botón de descargas solo aparece con licencia activada de
-            # verdad -- nunca en la versión free, aunque esta arranque con
-            # activated=True para desbloquear TV/radio (ver comentario en
-            # __init__).
-            if nav_id == NAV_DOWNLOAD and (not self.activated or self.es_version_free):
-                btn.setVisible(False)
-
         self.nav_group.button(NAV_HOME).setChecked(True)
         self.nav_group.idClicked.connect(self._on_nav_changed)
 
@@ -589,17 +564,10 @@ class MainWindow(QMainWindow):
         self.radio_list = self._make_list()
         self.fav_list = self._make_list(reorderable=True)
         self.hist_list = self._make_list()
-        self.download_panel = DownloadPanel(
-            dest_dir=self.downloads_dir,
-            on_dest_changed=self._on_downloads_dir_changed,
-            on_cast=self._cast_local_file,
-            on_finished=self._on_download_finished,
-            on_play_audio=self._play_podcast_episode,
-        )
         self.home_page = self._build_home_page()
 
         for page in (self.home_page, self.tv_list, self.radio_list, self.fav_list,
-                     self.hist_list, self.download_panel):
+                     self.hist_list):
             self.stack.addWidget(page)
 
         return self.stack
@@ -887,24 +855,6 @@ class MainWindow(QMainWindow):
 
         return recomendaciones
 
-    def _on_downloads_dir_changed(self, new_dir: str):
-        self.downloads_dir = new_dir
-        self.settings["downloads_dir"] = new_dir
-        if not cfg.save_settings(self.settings):
-            QMessageBox.warning(
-                self,
-                "No se pudieron guardar los ajustes",
-                "No se pudieron guardar los ajustes. Inténtalo de nuevo.",
-            )
-
-    def _on_download_finished(self, nombre: str, _ruta: str):
-        """
-        Aviso de bandeja al terminar una descarga -- útil sobre todo si la
-        ventana estaba minimizada mientras se descargaba algo largo, para
-        no tener que ir comprobando la pestaña de Descargas a mano.
-        """
-        self.tray.notify("Descarga completada", nombre)
-
     # ---------- Ecualizador ----------
 
     def _apply_saved_equalizer(self):
@@ -925,95 +875,6 @@ class MainWindow(QMainWindow):
 
     def _open_equalizer_dialog(self):
         EqualizerDialog(self).exec()
-
-    # ---------- Enviar a la TV (Chromecast / Google Cast / DLNA) ----------
-
-    def _active_cast_session(self):
-        """Sesión de casting con un dispositivo conectado ahora mismo, o None."""
-        if self._cast_session.device is not None:
-            return self._cast_session
-        if self._dlna_session.device is not None:
-            return self._dlna_session
-        return None
-
-    def _on_cast_live_clicked(self):
-        sesion = self._active_cast_session()
-        if sesion is not None:
-            sesion.disconnect()
-            self.cast_btn.setChecked(False)
-            self.statusBar().showMessage("Envío a la TV detenido.", 4000)
-            return
-
-        if not self.current_url:
-            self.cast_btn.setChecked(False)
-            QMessageBox.information(
-                self, "Nada en reproducción", "Elige un canal o una emisora primero."
-            )
-            return
-
-        content_type = guess_stream_content_type(self.current_url, self.current_type or "")
-        self._open_cast_picker_and_send(
-            title=self.current_name or "", url=self.current_url, content_type=content_type
-        )
-
-    def _play_podcast_episode(self, url: str, title: str):
-        """
-        Reproduce un episodio de podcast (pestaña Descargas > Podcasts) con
-        el mismo reproductor de audio que la radio -- un episodio de
-        podcast no es más que una URL de audio, así que se reutiliza
-        PlaybackController.play() en vez de montar un reproductor aparte.
-        """
-        self.playback.play("radio", title, url)
-
-    def _cast_local_file(self, filepath: str, title: str):
-        if not os.path.isfile(filepath):
-            QMessageBox.warning(
-                self, "Archivo no encontrado", "El archivo descargado ya no está en esa ubicación."
-            )
-            return
-        self._open_cast_picker_and_send(title=title, local_path=filepath)
-
-    def _open_cast_picker_and_send(
-        self, *, title: str, url: str | None = None, local_path: str | None = None,
-        content_type: str | None = None,
-    ):
-        sesion_activa = self._active_cast_session()
-        if sesion_activa is not None:
-            sesion_activa.disconnect()
-
-        dialog = CastDeviceDialog(self)
-        try:
-            if dialog.exec() != QDialog.Accepted or not dialog.selected_name:
-                self.cast_btn.setChecked(False)
-                return
-
-            backend = dialog.selected_backend
-            worker = dialog.get_worker(backend)
-            device = worker.device_by_name(dialog.selected_name) if worker else None
-            if device is None:
-                self.cast_btn.setChecked(False)
-                QMessageBox.warning(
-                    self, "Dispositivo no disponible", "No se pudo conectar con ese dispositivo."
-                )
-                return
-
-            sesion = self._cast_session if backend == BACKEND_CHROMECAST else self._dlna_session
-            try:
-                sesion.connect(device)
-                if local_path:
-                    sesion.cast_local_file(local_path, title=title)
-                else:
-                    sesion.cast_url(url, content_type or "video/mp4", title=title)
-                self.cast_btn.setChecked(True)
-                self.statusBar().showMessage(f"Enviando «{title}» a {device.name}…", 6000)
-            except Exception as exc:
-                self.cast_btn.setChecked(False)
-                sesion.disconnect()
-                QMessageBox.warning(self, "Error al enviar a la TV", str(exc))
-        finally:
-            # Pase lo que pase (aceptar, cancelar o error), hay que cerrar el
-            # explorador zeroconf: si no, cada búsqueda deja sockets abiertos.
-            dialog.release_worker()
 
     def _make_list(self, reorderable: bool = False) -> QListWidget:
         lst = QListWidget()
@@ -1178,25 +1039,6 @@ class MainWindow(QMainWindow):
         self.fav_btn.clicked.connect(self.playback.toggle_favorite_current)
         left_group.addWidget(self.fav_btn)
 
-        self.cast_btn = QPushButton()
-        self.cast_btn.setObjectName("castButton")
-        set_variant(self.cast_btn, "cast")
-        self.cast_btn.setIconSize(QSize(18, 18))
-        self.cast_btn.setIcon(app_icons.icon_cast(palette.ACCENT_CAST))
-        self.cast_btn.setCheckable(True)
-        self.cast_btn.setToolTip("Enviar a Chromecast / TV")
-        self.cast_btn.clicked.connect(self._on_cast_live_clicked)
-        self.cast_btn.toggled.connect(
-            # "checked" pinta el icono con palette.BG_ROOT, igual que
-            # #castButton[uiVariant="cast"]:checked en ui/style.py sobre el
-            # fondo palette.ACCENT_CAST -- ver comentario equivalente en
-            # tv_btn más arriba.
-            lambda checked: self.cast_btn.setIcon(app_icons.icon_cast(palette.BG_ROOT if checked else palette.ACCENT_CAST))
-        )
-        # Mismo criterio que NAV_DOWNLOAD: Chromecast tampoco está incluido
-        # en la versión free.
-        self.cast_btn.setVisible(self.activated and not self.es_version_free)
-        left_group.addWidget(self.cast_btn)
 
         self.stop_btn = QPushButton("\u25A0")
         self.stop_btn.setObjectName("ctrlButton")
@@ -1586,9 +1428,6 @@ class MainWindow(QMainWindow):
             ("Importar lista M3U…", self.library.open_import_playlist_dialog),
             ("Gestionar canales personalizados…", lambda: self.library.open_manage_channels_dialog()),
         ]
-        if self.activated and not self.es_version_free:
-            acciones.append(("Ir a Descargas", lambda: self.nav_group.button(NAV_DOWNLOAD).click()))
-
         dialog = CommandPalette(self, acciones)
         dialog.show_centered()
 
@@ -1684,9 +1523,9 @@ class MainWindow(QMainWindow):
             self.lists.refresh_folder_filter()
         elif nav_id == NAV_HOME:
             self._refresh_home_page()
-        self.search_box.setVisible(nav_id not in (NAV_DOWNLOAD, NAV_HOME))
+        self.search_box.setVisible(nav_id != NAV_HOME)
         self.search_box.clear()
-        if nav_id not in (NAV_DOWNLOAD, NAV_HOME):
+        if nav_id != NAV_HOME:
             self.lists.filter_current_list()
         self._animate_page(self.stack.currentWidget())
 
@@ -2061,13 +1900,6 @@ class MainWindow(QMainWindow):
                 self._scheduled_recording_active = None
         self.player.stop()
         self.equalizer.stop()
-        self._cast_session.disconnect()
-        self._dlna_session.disconnect()
-        # on_wait: se reenvía por compatibilidad con la firma anterior (ver
-        # el comentario del recorder.stop() más arriba) -- con libtorrent
-        # embebido en el proceso ya no hay un aria2c.exe aparte que esperar
-        # a que se apague, así que en la práctica ya no bloquea nada.
-        self.download_panel.shutdown(on_wait=process_events_during_shutdown)
         self._taskbar.cleanup()
         shutdown_workers(FetchWorker.active_workers())
         self.player.release()

@@ -6,12 +6,7 @@ Compilar con:  pyinstaller TDTRadioVIP_Free.spec
 """
 import os, sys
 
-from PyInstaller.utils.hooks import collect_submodules
-
-hidden_imports = (
-    collect_submodules('pychromecast') + collect_submodules('zeroconf')
-    + collect_submodules('libtorrent')
-)
+hidden_imports = []
 
 
 def buscar_vlc():
